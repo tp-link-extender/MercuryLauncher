@@ -1,7 +1,7 @@
 module Config
 
-open System.Reflection
 open System.IO
+open System.Reflection
 
 let name = "Mercury"
 let domain = "xtcy.dev"
@@ -18,4 +18,4 @@ let readEmbeddedResourceAsBytes (resourceName: string) =
         stream.CopyTo memoryStream
         memoryStream.ToArray()
 
-let icon = readEmbeddedResourceAsBytes "MercuryLauncher.icon.png"
+let icon = readEmbeddedResourceAsBytes "MercuryLauncher.iconlight.png"

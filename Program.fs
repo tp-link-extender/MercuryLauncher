@@ -9,4 +9,5 @@ let main args =
         .Configure<App>()
         .UsePlatformDetect()
         .UseSkia()
+        .WithInterFont()
         .StartWithClassicDesktopLifetime args

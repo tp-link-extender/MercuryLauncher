@@ -10,14 +10,16 @@
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
 	</PropertyGroup>
 	<ItemGroup>
-		<EmbeddedResource Include="icon.png" />
+		<EmbeddedResource Include="iconlight.png" />
+		<AvaloniaResource Include="Assets\Fonts\*" />
 		<Compile Include="Config.fs" />
 		<Compile Include="Window.fs" />
 		<Compile Include="Program.fs" />
 	</ItemGroup>
 	<ItemGroup>
-	  <PackageReference Include="Avalonia.Desktop" Version="11.1.0" />
+	  <PackageReference Include="Avalonia.Desktop" Version="11.3.7" />
+	  <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.7" />
 	  <PackageReference Include="Avalonia.FuncUI" Version="1.5.1" />
-	  <PackageReference Include="Avalonia.Themes.Fluent" Version="11.1.0" />
+	  <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.7" />
 	</ItemGroup>
 </Project>
