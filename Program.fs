@@ -1,6 +1,12 @@
-﻿open System
+﻿module Program
 
-[<EntryPoint; STAThread>]
+open Avalonia
+open Window
+
+[<EntryPoint>]
 let main args =
-    printfn "Sup"
-    0
+    AppBuilder
+        .Configure<App>()
+        .UsePlatformDetect()
+        .UseSkia()
+        .StartWithClassicDesktopLifetime args
