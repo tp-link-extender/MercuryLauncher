@@ -2,7 +2,6 @@ module Config
 
 open System.Reflection
 open System.IO
-open System.Windows.Media.Imaging
 
 let name = "Mercury"
 let domain = "xtcy.dev"
@@ -11,6 +10,7 @@ let domain = "xtcy.dev"
 let readEmbeddedResourceAsBytes (resourceName: string) =
     let assembly = Assembly.GetExecutingAssembly()
     use stream = assembly.GetManifestResourceStream resourceName
+
     if isNull stream then
         failwithf "Resource '%s' not found in assembly." resourceName
     else
@@ -18,13 +18,4 @@ let readEmbeddedResourceAsBytes (resourceName: string) =
         stream.CopyTo memoryStream
         memoryStream.ToArray()
 
-let imgIcon =
-    let icon = readEmbeddedResourceAsBytes "MercuryLauncher.icon.png"
-
-    let img = BitmapImage()
-    img.BeginInit()
-    img.StreamSource <- new MemoryStream(icon)
-    img.CacheOption <- BitmapCacheOption.OnLoad
-    img.EndInit()
-    img.Freeze() // Freeze the image to make it cross-thread accessible
-    img
+let icon = readEmbeddedResourceAsBytes "MercuryLauncher.icon.png"

@@ -5,11 +5,9 @@
 		<PublishSingleFile>true</PublishSingleFile>
 		<DebugType>None</DebugType>
 
-		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
-		<TargetFramework>net9.0-windows</TargetFramework>
+		<TargetFramework>net9.0</TargetFramework>
 		<RootNamespace>MercuryLauncher</RootNamespace>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
-		<UseWpf>true</UseWpf>
 	</PropertyGroup>
 	<ItemGroup>
 		<EmbeddedResource Include="icon.png" />
