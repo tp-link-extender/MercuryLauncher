@@ -10,6 +10,15 @@ open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Themes.Fluent
 open Config
+open Microsoft.FSharp.Control
+
+type Update =
+    | Text of string
+    | Progress of float
+    | Indeterminate of bool
+    | SuccessMessage of string
+    | ErrorMessage of string
+    | Shutdown
 
 let width = 500
 let height = 320
@@ -18,20 +27,31 @@ let blurRadius = 20
 let darker = Color.FromRgb(10uy, 9uy, 8uy)
 let accent = Color.FromRgb(119uy, 51uy, 255uy) // Mercury hsl(260 100 60)
 
-let view () =
-    Component (fun _ ->
+let view (updateEvent: Event<Update>) =
+    Component (fun ctx ->
+        let textState = ctx.useState "Initialising launcher..."
+
+        updateEvent.Publish.Subscribe (function
+            | Text text -> textState.Set text
+            | Progress progress -> ()
+            | Indeterminate indeterminate -> ()
+            | SuccessMessage message -> ()
+            | ErrorMessage message -> ()
+            | Shutdown -> ())
+        |> ignore
+
         let textSize = 24
         let textPadding = 20
 
         let children: Types.IView list =
             [ TextBlock.create [
                   TextBlock.dock Dock.Top
+                  TextBlock.fontSize textSize
                   TextBlock.fontWeight FontWeight.SemiBold
                   TextBlock.margin (Thickness(0, textPadding, 0, 0))
-                  TextBlock.fontSize textSize
                   TextBlock.verticalAlignment VerticalAlignment.Center
                   TextBlock.horizontalAlignment HorizontalAlignment.Center
-                  TextBlock.text $"Starting {name}..."
+                  TextBlock.text textState.Current
               ]
               Image.create [
                   // centre in the window
@@ -85,8 +105,10 @@ let view () =
         ])
 
 
-type MainWindow() =
+type MainWindow(xfn) =
     inherit HostWindow()
+
+    let updateEvent = new Event<Update>()
 
     do
         base.Title <- $"{name} Launcher"
@@ -97,13 +119,19 @@ type MainWindow() =
         base.SystemDecorations <- SystemDecorations.None
         base.CornerRadius <- CornerRadius 15
         // set transparent background
-        base.Background <- SolidColorBrush(Color.FromArgb(0uy, 0uy, 0uy, 0uy))
+        base.Background <- SolidColorBrush Colors.Transparent
 
         // set icon (not taskbar icon afaict)
         base.Icon <- new WindowIcon(new System.IO.MemoryStream(icon))
-        base.Content <- view ()
+        base.Content <- view updateEvent
 
-type App() =
+    override this.OnLoaded(e: Interactivity.RoutedEventArgs) : unit =
+        printfn "Initialized MainWindow"
+        // start in another thread
+        async { xfn updateEvent } |> Async.Start
+        printfn "Finished xfn"
+
+type App(xfn) =
     inherit Application()
 
     override this.Initialize() =
@@ -112,5 +140,5 @@ type App() =
 
     override this.OnFrameworkInitializationCompleted() =
         match this.ApplicationLifetime with
-        | :? IClassicDesktopStyleApplicationLifetime as desktopLifetime -> desktopLifetime.MainWindow <- MainWindow()
+        | :? IClassicDesktopStyleApplicationLifetime as desktopLifetime -> desktopLifetime.MainWindow <- MainWindow xfn
         | _ -> ()
