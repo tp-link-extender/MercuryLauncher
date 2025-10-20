@@ -14,7 +14,7 @@ open Microsoft.FSharp.Control
 
 type Update =
     | Text of string
-    | Progress of float
+    | Progress of int
     | Indeterminate of bool
     | SuccessMessage of string
     | ErrorMessage of string
@@ -24,39 +24,52 @@ let width = 500
 let height = 320
 let blurRadius = 20
 
-let darker = Color.FromRgb(10uy, 9uy, 8uy)
-let accent = Color.FromRgb(119uy, 51uy, 255uy) // Mercury hsl(260 100 60)
+let mainaccent = Color.FromRgb(119uy, 51uy, 255uy) // Mercury hsl(260 100 60)
+let darker = Color.FromRgb(9uy, 8uy, 10uy)
+let background = Color.FromRgb(15uy, 14uy, 17uy)
+let accent = Color.FromRgb(29uy, 28uy, 31uy)
 
 let view (updateEvent: Event<Update>) =
     Component (fun ctx ->
         let textState = ctx.useState "Initialising launcher..."
+        let progress = ctx.useState 0
+        let indeterminate = ctx.useState true
 
         updateEvent.Publish.Subscribe (function
-            | Text text -> textState.Set text
-            | Progress progress -> ()
-            | Indeterminate indeterminate -> ()
+            | Text t -> textState.Set t
+            | Progress p -> progress.Set p
+            | Indeterminate i -> indeterminate.Set i
             | SuccessMessage message -> ()
             | ErrorMessage message -> ()
             | Shutdown -> ())
         |> ignore
 
         let textSize = 24
-        let textPadding = 20
+        let padding = 20
 
         let children: Types.IView list =
             [ TextBlock.create [
                   TextBlock.dock Dock.Top
                   TextBlock.fontSize textSize
                   TextBlock.fontWeight FontWeight.SemiBold
-                  TextBlock.margin (Thickness(0, textPadding, 0, 0))
                   TextBlock.verticalAlignment VerticalAlignment.Center
                   TextBlock.horizontalAlignment HorizontalAlignment.Center
                   TextBlock.text textState.Current
               ]
+              ProgressBar.create [
+                  ProgressBar.dock Dock.Bottom
+                  ProgressBar.isIndeterminate indeterminate.Current
+                  ProgressBar.value (float progress.Current)
+                  ProgressBar.height 8
+                  ProgressBar.cornerRadius (CornerRadius 4)
+                  ProgressBar.foreground (SolidColorBrush mainaccent)
+                  ProgressBar.background (SolidColorBrush accent)
+                  ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
+                  ProgressBar.verticalAlignment VerticalAlignment.Center
+              ]
               Image.create [
                   // centre in the window
                   Image.dock Dock.Bottom
-                  Image.margin (Thickness(0, 0, 0, int (textSize + textPadding)))
                   Image.source (new Imaging.Bitmap(new System.IO.MemoryStream(icon)))
                   Image.stretch Stretch.Uniform
                   Image.width 128
@@ -67,6 +80,7 @@ let view (updateEvent: Event<Update>) =
 
         let panel =
             DockPanel.create [
+                DockPanel.margin (Thickness padding)
                 DockPanel.children children
             ]
 
@@ -74,9 +88,9 @@ let view (updateEvent: Event<Update>) =
         let margin = 5
         let cornerRadius = 30
 
-        let background =
+        let bg =
             Border.create [
-                Border.background (SolidColorBrush accent)
+                Border.background (SolidColorBrush mainaccent)
                 // blur background
                 Border.effect (BlurEffect(Radius = blurRadius))
                 Border.margin (Thickness blurRadius)
@@ -85,9 +99,9 @@ let view (updateEvent: Event<Update>) =
             ]
 
         // create container with background and corner radius
-        let foreground =
+        let fg =
             Border.create [
-                Border.background (SolidColorBrush accent)
+                Border.background (SolidColorBrush mainaccent)
                 Border.margin (Thickness(int (margin + blurRadius)))
                 Border.cornerRadius (CornerRadius(int (cornerRadius - margin)))
                 Border.child (
@@ -100,10 +114,7 @@ let view (updateEvent: Event<Update>) =
                 )
             ]
 
-        Grid.create [
-            Grid.children [ background; foreground ]
-        ])
-
+        Grid.create [ Grid.children [ bg; fg ] ])
 
 type MainWindow(xfn) =
     inherit HostWindow()

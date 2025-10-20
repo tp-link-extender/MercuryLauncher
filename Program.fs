@@ -290,7 +290,7 @@ let launchAndComplete (u: Event<Update>) ticket (p, v) =
         let r = clearOldVersions p v ()
 
         if r.IsOk then
-            u.Trigger(Progress 100.)
+            u.Trigger(Progress 100)
             u.Trigger(Indeterminate false)
             u.Trigger(Text "Done!")
 
@@ -327,7 +327,7 @@ let init ticket (u: Event<Update>) =
 
     match result with
     | Ok _ ->
-        u.Trigger(Progress 100.)
+        u.Trigger(Progress 100)
         u.Trigger(Indeterminate false)
         u.Trigger(Text "Done!")
         Thread.Sleep 100 // give the UI a chance to update before closing
