@@ -30,7 +30,7 @@ let background = Color.FromRgb(15uy, 14uy, 17uy)
 let accent = Color.FromRgb(29uy, 28uy, 31uy)
 
 let view (updateEvent: Event<Update>) =
-    Component (fun ctx ->
+    Component(fun ctx ->
         let textState = ctx.useState "Initialising launcher..."
         let progress = ctx.useState 0
         let indeterminate = ctx.useState true
@@ -47,42 +47,40 @@ let view (updateEvent: Event<Update>) =
         let textSize = 24
         let padding = 20
 
-        let children: Types.IView list =
-            [ TextBlock.create [
-                  TextBlock.dock Dock.Top
-                  TextBlock.fontSize textSize
-                  TextBlock.fontWeight FontWeight.SemiBold
-                  TextBlock.verticalAlignment VerticalAlignment.Center
-                  TextBlock.horizontalAlignment HorizontalAlignment.Center
-                  TextBlock.text textState.Current
-              ]
-              ProgressBar.create [
-                  ProgressBar.dock Dock.Bottom
-                  ProgressBar.isIndeterminate indeterminate.Current
-                  ProgressBar.value (float progress.Current)
-                  ProgressBar.height 8
-                  ProgressBar.cornerRadius (CornerRadius 4)
-                  ProgressBar.foreground (SolidColorBrush mainaccent)
-                  ProgressBar.background (SolidColorBrush accent)
-                  ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
-                  ProgressBar.verticalAlignment VerticalAlignment.Center
-              ]
-              Image.create [
-                  // centre in the window
-                  Image.dock Dock.Bottom
-                  Image.source (new Imaging.Bitmap(new System.IO.MemoryStream(icon)))
-                  Image.stretch Stretch.Uniform
-                  Image.width 128
-                  Image.height 128
-                  Image.horizontalAlignment HorizontalAlignment.Center
-                  Image.verticalAlignment VerticalAlignment.Center
-              ] ]
+        let children: Types.IView list = [
+            TextBlock.create [
+                TextBlock.dock Dock.Top
+                TextBlock.fontSize textSize
+                TextBlock.fontWeight FontWeight.SemiBold
+                TextBlock.verticalAlignment VerticalAlignment.Center
+                TextBlock.horizontalAlignment HorizontalAlignment.Center
+                TextBlock.text textState.Current
+            ]
+            ProgressBar.create [
+                ProgressBar.dock Dock.Bottom
+                ProgressBar.isIndeterminate indeterminate.Current
+                ProgressBar.value (float progress.Current)
+                ProgressBar.height 8
+                ProgressBar.cornerRadius (CornerRadius 4)
+                ProgressBar.foreground (SolidColorBrush mainaccent)
+                ProgressBar.background (SolidColorBrush accent)
+                ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
+                ProgressBar.verticalAlignment VerticalAlignment.Center
+            ]
+            Image.create [
+                // centre in the window
+                Image.dock Dock.Bottom
+                Image.source (new Imaging.Bitmap(new System.IO.MemoryStream(icon)))
+                Image.stretch Stretch.Uniform
+                Image.width 128
+                Image.height 128
+                Image.horizontalAlignment HorizontalAlignment.Center
+                Image.verticalAlignment VerticalAlignment.Center
+            ]
+        ]
 
         let panel =
-            DockPanel.create [
-                DockPanel.margin (Thickness padding)
-                DockPanel.children children
-            ]
+            DockPanel.create [ DockPanel.margin (Thickness padding); DockPanel.children children ]
 
         // add background behind panel with some transparency and rounded corners
         let margin = 5
@@ -136,7 +134,7 @@ type MainWindow(xfn) =
         base.Icon <- new WindowIcon(new System.IO.MemoryStream(icon))
         base.Content <- view updateEvent
 
-    override this.OnLoaded(e: Interactivity.RoutedEventArgs) : unit =
+    override _.OnLoaded(_) =
         printfn "Initialized MainWindow"
         // start in another thread
         async { xfn updateEvent } |> Async.Start

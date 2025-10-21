@@ -53,12 +53,9 @@ let requestVersion () =
     | e -> Error(FailedToConnect e)
 
 let validateVersion (v: string) =
-    if v.Length > 20 then
-        Error VersionTooLong
-    elif v.Length = 0 then
-        Error VersionMissing
-    else
-        Ok v
+    if v.Length > 20 then Error VersionTooLong
+    elif v.Length = 0 then Error VersionMissing
+    else Ok v
 
 // add the versions directory to the path
 let versionsPath s = Path.Combine(s, "Versions")
@@ -77,9 +74,10 @@ let studioPath s v =
     Path.Combine(versionPath s v, $"{name}StudioBeta.exe")
 
 let getPath v =
-    let path =
-        [| Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
-           name |]
+    let path = [|
+        Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
+        name
+    |]
 
     Ok(path |> Path.Combine, v)
 
@@ -101,13 +99,12 @@ let ungzipClient (data: byte array) =
     try
         let tar = new MemoryStream()
 
-        (new GZipStream(new MemoryStream(data), CompressionMode.Decompress))
-            .CopyTo tar
+        (new GZipStream(new MemoryStream(data), CompressionMode.Decompress)).CopyTo tar
 
         tar.Seek(0, SeekOrigin.Begin) |> ignore
         Ok tar
-    with
-    | e -> Error(FailedToUnpack e)
+    with e ->
+        Error(FailedToUnpack e)
 
 let untarClient p v (tar: MemoryStream) =
     let path = versionPath p v
@@ -120,25 +117,18 @@ let untarClient p v (tar: MemoryStream) =
         Formats.Tar.TarFile.ExtractToDirectory(tar, path, true)
 
         Ok(p, v)
-    with
-    | e -> Error(FailedToInstall e)
+    with e ->
+        Error(FailedToInstall e)
 
 let ensurePath (p, v) = Ok(File.Exists(playerPath p v), p, v)
 
 let launch ticket (p, v) =
-    let procArgs =
-        [| $"--play"
-           "-a"
-           authUrl
-           "-t"
-           authTicket
-           "-j"
-           joinUrl ticket |]
+    let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket |]
 
     try
         Ok(Process.Start(playerPath p v, procArgs))
-    with
-    | e -> Error(FailedToLaunch e)
+    with e ->
+        Error(FailedToLaunch e)
 
 // Register the protocol handler to this application
 let registerURI (p, v) =
@@ -164,12 +154,9 @@ let registerURI (p, v) =
 
 let checkThatItLaunchedCorrectly (p: Process) =
     try
-        if p.HasExited then
-            Error ClientNotFound
-        else
-            Ok()
-    with
-    | e -> Error(FailedToLaunch e)
+        if p.HasExited then Error ClientNotFound else Ok()
+    with e ->
+        Error(FailedToLaunch e)
 
 let clearOldVersions p v () =
     let path = versionsPath p
@@ -182,11 +169,11 @@ let clearOldVersions p v () =
                 try
                     Directory.Delete(d, true)
                     Ok()
-                with
-                | e -> Error e)
+                with e ->
+                    Error e)
             |> Array.filter _.IsError
             |> _.Length
-            
+
         if failedVersions = 0 then
             Ok()
         else
@@ -309,6 +296,7 @@ let launchAndComplete (u: Event<Update>) ticket (p, v) =
 
 let init ticket (u: Event<Update>) =
     u.Trigger(Text $"Connecting to {name}...")
+
     let result =
         requestVersion ()
         >>= log
@@ -342,7 +330,8 @@ let startApp xfn =
         .UsePlatformDetect()
         .UseSkia()
         .WithInterFont()
-        .StartWithClassicDesktopLifetime [||]
+        .StartWithClassicDesktopLifetime
+        [||]
 
 [<EntryPoint>]
 let main args =
@@ -359,8 +348,7 @@ let main args =
                 //     MessageBoxButton.OK,
                 //     MessageBoxImage.Error
                 // )
-                printfn $"The first argument must be a {launcherScheme} URL."
-                |> ignore
+                printfn $"The first argument must be a {launcherScheme} URL." |> ignore
 
                 Environment.Exit 1
 
