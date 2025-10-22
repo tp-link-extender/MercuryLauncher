@@ -8,6 +8,8 @@
 		<TargetFramework>net9.0</TargetFramework>
 		<RootNamespace>MercuryLauncher</RootNamespace>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
+		<!-- <PublishTrimmed>true</PublishTrimmed>
+		<TrimmerRemoveSymbols>true</TrimmerRemoveSymbols> -->
 	</PropertyGroup>
 	<ItemGroup>
 		<EmbeddedResource Include="iconlight.png" />
