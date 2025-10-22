@@ -10,7 +10,7 @@ open System.Net
 open System.Net.Http
 open System
 open Window
-open System.Threading
+open Microsoft.Win32
 
 type ErrorType =
     | VersionTooLong
@@ -132,25 +132,24 @@ let launch ticket (p, v) =
 
 // Register the protocol handler to this application
 let registerURI (p, v) =
-    // try
-    //     let key =
-    //         Registry.CurrentUser.CreateSubKey($"Software\\Classes\\{launcherScheme}", true)
+    try
+        let key =
+            Registry.CurrentUser.CreateSubKey($"Software\\Classes\\{launcherScheme}", true)
 
-    //     // same as reg structure created by 2016 launcher
-    //     key.SetValue("", $"URL: {name} Protocol")
-    //     key.SetValue("URL Protocol", "")
+        // same as reg structure created by 2016 launcher
+        key.SetValue("", $"URL: {name} Protocol")
+        key.SetValue("URL Protocol", "")
 
-    //     let shellKey = key.CreateSubKey "shell"
-    //     let openKey = shellKey.CreateSubKey "open"
-    //     let commandKey = openKey.CreateSubKey "command"
+        let shellKey = key.CreateSubKey "shell"
+        let openKey = shellKey.CreateSubKey "open"
+        let commandKey = openKey.CreateSubKey "command"
 
-    //     let exePath = launcherPath p v
-    //     commandKey.SetValue("", $"\"{exePath}\" %%1")
+        let exePath = launcherPath p v
+        commandKey.SetValue("", $"\"{exePath}\" %%1")
 
-    //     Ok(p, v)
-    // with
-    // | e -> Error(BadLaunch e)
-    Ok(p, v)
+        Ok(p, v)
+    with e ->
+        Error(BadLaunch e)
 
 let checkThatItLaunchedCorrectly (p: Process) =
     try
@@ -181,28 +180,28 @@ let clearOldVersions p v () =
     else
         Error ClientNotFound
 
-let handleError (u: Event<Update>) =
+let handleError (c: Event<Control>) =
     function
     | VersionTooLong ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"There was an error when trying to get the version from {name}.\n\
                 The version string for {name} is too long."
         )
     | VersionMissing ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"There was an error when trying to get the version from {name}.\n\
                 The version string for {name} is missing."
         )
     | VersionFailedToGet code ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"There was an error when trying to get the version from {name}.\n\
                 The server returned a {code} status code."
         )
     | FailedToConnect ex ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"Failed to connect to {name}.\n\
                 Please check your internet connection and try again.\n\
@@ -210,7 +209,7 @@ let handleError (u: Event<Update>) =
                 Details: {ex.Message}"
         )
     | FailedToDownload ex ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"Failed to download the {name} client.\n\
                 Please check your internet connection and try again.\n\
@@ -218,14 +217,14 @@ let handleError (u: Event<Update>) =
                 Details: {ex.Message}"
         )
     | FailedToUnpack ex ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"Failed to unpack the {name} client.\n\
                 \n\
                 Details: {ex.Message}"
         )
     | FailedToInstall ex ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"Failed to install the {name} client.\n\
                 Please make sure write permissions are given to the installation directory, and there are no existing files with the same name.\n\
@@ -233,26 +232,26 @@ let handleError (u: Event<Update>) =
                 Details: {ex.Message}"
         )
     | ClientNotFound ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"The {name} client was not found.\n\
                 Please make sure that the client is installed and try again."
         )
     | FailedToRemoveOldVersions ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"Failed to remove old versions of the {name} client.\n\
                 Please make sure write permissions are given to the versions directory."
         )
     | FailedToLaunch ex ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"Failed to launch {name}.\n\
                 \n\
                 Details: {ex.Message}"
         )
     | BadLaunch ex ->
-        u.Trigger(
+        c.Trigger(
             ErrorMessage
                 $"The {name} client launched, but it did not start correctly.\n\
                 \n\
@@ -271,7 +270,7 @@ let downloadAndInstall (u: Event<Update>) (d, p, v) =
         >>= yes (u.Trigger(Text "Installing client..."))
         >>= untarClient p v
 
-let launchAndComplete (u: Event<Update>) ticket (p, v) =
+let launchAndComplete (c: Event<Control>) (u: Event<Update>) ticket (p, v) =
     if ticket = "" then
         u.Trigger(Text $"Clearing old versions...")
         let r = clearOldVersions p v ()
@@ -281,7 +280,7 @@ let launchAndComplete (u: Event<Update>) ticket (p, v) =
             u.Trigger(Indeterminate false)
             u.Trigger(Text "Done!")
 
-            u.Trigger(SuccessMessage $"{name} has been successfully installed and is ready to use!")
+            c.Trigger(SuccessMessage $"{name} has been successfully installed and is ready to use!")
 
         // TODO: redirect to site
         r
@@ -294,7 +293,7 @@ let launchAndComplete (u: Event<Update>) ticket (p, v) =
         >>= yes (u.Trigger(Text $"Clearing old versions..."))
         >>= clearOldVersions p v
 
-let init ticket (u: Event<Update>) =
+let init ticket (c: Event<Control>) (u: Event<Update>) =
     u.Trigger(Text $"Connecting to {name}...")
 
     let result =
@@ -311,18 +310,17 @@ let init ticket (u: Event<Update>) =
         >>= log
         >>= yes (u.Trigger(Text "Registering protocol..."))
         >>= registerURI
-        >>= launchAndComplete u ticket
+        >>= launchAndComplete c u ticket
 
     match result with
     | Ok _ ->
         u.Trigger(Progress 100)
         u.Trigger(Indeterminate false)
         u.Trigger(Text "Done!")
-        Thread.Sleep 100 // give the UI a chance to update before closing
-    | Error e -> handleError u e
+        c.Trigger Shutdown
+    | Error e -> handleError c e // this will trigger the shutdown itself
 
     printfn "done"
-    u.Trigger Shutdown
 
 let startApp xfn =
     AppBuilder
@@ -333,7 +331,7 @@ let startApp xfn =
         .StartWithClassicDesktopLifetime
         [||]
 
-[<EntryPoint>]
+[<EntryPoint; STAThread>]
 let main args =
     let ticket =
         if args = [||] then
@@ -342,13 +340,8 @@ let main args =
             let mainArg = args[0]
 
             if not (mainArg.StartsWith launcherScheme) then
-                // MessageBox.Show(
-                //     $"The first argument must be a {launcherScheme} URL.",
-                //     $"{name} launcher",
-                //     MessageBoxButton.OK,
-                //     MessageBoxImage.Error
-                // )
-                printfn $"The first argument must be a {launcherScheme} URL." |> ignore
+                // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
+                // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
 
                 Environment.Exit 1
 
