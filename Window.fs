@@ -47,6 +47,7 @@ let viewPopup text =
                     TextBlock.foreground (SolidColorBrush Colors.White)
                     TextBlock.textAlignment TextAlignment.Left
                     TextBlock.horizontalAlignment HorizontalAlignment.Left
+                    TextBlock.textWrapping TextWrapping.Wrap               
                 ]
             )
         ])

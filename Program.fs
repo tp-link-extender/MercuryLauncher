@@ -258,16 +258,18 @@ let handleError (c: Event<Control>) =
                 Details: {ex.Message}"
         )
 
-let yes _ x = Ok x
+let trigger (u: Event<Update>) update d =
+    u.Trigger update
+    Ok d
 
 let downloadAndInstall (u: Event<Update>) (d, p, v) =
     if d then
         Ok(p, v)
     else
         downloadClient v
-        >>= yes (u.Trigger(Text "Unpacking client..."))
+        >>= trigger u (Text "Unpacking client...")
         >>= ungzipClient
-        >>= yes (u.Trigger(Text "Installing client..."))
+        >>= trigger u (Text "Installing client...")
         >>= untarClient p v
 
 let launchAndComplete (c: Event<Control>) (u: Event<Update>) ticket (p, v) =
@@ -288,9 +290,9 @@ let launchAndComplete (c: Event<Control>) (u: Event<Update>) ticket (p, v) =
         u.Trigger(Text $"Starting {name}...")
 
         launch ticket (p, v)
-        >>= yes (u.Trigger(Text $"Finishing up..."))
+        >>= trigger u (Text $"Finishing up...")
         >>= checkThatItLaunchedCorrectly
-        >>= yes (u.Trigger(Text $"Clearing old versions..."))
+        >>= trigger u (Text $"Clearing old versions...")
         >>= clearOldVersions p v
 
 let init ticket (c: Event<Control>) (u: Event<Update>) =
@@ -302,13 +304,13 @@ let init ticket (c: Event<Control>) (u: Event<Update>) =
         >>= validateVersion
         >>= getPath
         >>= log
-        >>= yes (u.Trigger(Text "Getting client..."))
+        >>= trigger u (Text "Getting client...")
         >>= ensurePath
         >>= log
-        >>= yes (u.Trigger(Text "Downloading client..."))
+        >>= trigger u (Text "Downloading client...")
         >>= downloadAndInstall u
         >>= log
-        >>= yes (u.Trigger(Text "Registering protocol..."))
+        >>= trigger u (Text "Registering protocol...")
         >>= registerURI
         >>= launchAndComplete c u ticket
 
