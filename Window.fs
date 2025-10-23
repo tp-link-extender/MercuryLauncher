@@ -35,7 +35,7 @@ let accent = Color.FromRgb(29uy, 28uy, 31uy)
 
 let viewPopup text =
     Component(fun _ ->
-        let padding = 18
+        let padding = 10
 
         Border.create [
             Border.margin (Thickness(padding, padding, padding, int (padding * 2)))

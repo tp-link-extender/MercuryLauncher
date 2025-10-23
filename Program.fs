@@ -62,7 +62,7 @@ let versionsPath s = Path.Combine(s, "Versions")
 
 // add the version to the path
 let versionPath s v =
-    Path.Combine(versionsPath s, $"version-{v}")
+    Path.Combine(versionsPath s, $"version-%s{v}")
 
 let launcherPath s v =
     Path.Combine(versionPath s v, $"{name}Launcher.exe")
@@ -73,7 +73,7 @@ let playerPath s v =
 let studioPath s v =
     Path.Combine(versionPath s v, $"{name}StudioBeta.exe")
 
-let getPath v =
+let getPath (v: string) =
     let path = [|
         Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
         name
@@ -157,7 +157,7 @@ let checkThatItLaunchedCorrectly (p: Process) =
     with e ->
         Error(FailedToLaunch e)
 
-let clearOldVersions p v () =
+let clearOldVersions (p: string) v () =
     let path = versionsPath p
 
     if Directory.Exists path then
