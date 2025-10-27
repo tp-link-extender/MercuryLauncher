@@ -11,11 +11,15 @@ open Avalonia.Media
 open Avalonia.Themes.Fluent
 open Config
 open Microsoft.FSharp.Control
+open System
+open System.Threading
 
 type Update =
     | Text of string
     | Progress of int
     | Indeterminate of bool
+
+type Control =
     | SuccessMessage of string
     | ErrorMessage of string
     | Shutdown
@@ -29,60 +33,88 @@ let darker = Color.FromRgb(9uy, 8uy, 10uy)
 let background = Color.FromRgb(15uy, 14uy, 17uy)
 let accent = Color.FromRgb(29uy, 28uy, 31uy)
 
-let view (updateEvent: Event<Update>) =
-    Component (fun ctx ->
+let viewPopup text =
+    Component(fun _ ->
+        let padding = 10
+
+        Border.create [
+            Border.margin (Thickness(padding, padding, padding, int (padding * 2)))
+            Border.child (
+                TextBlock.create [
+                    TextBlock.text text
+                    TextBlock.fontSize 14
+                    TextBlock.fontWeight FontWeight.SemiBold
+                    TextBlock.foreground (SolidColorBrush Colors.White)
+                    TextBlock.textAlignment TextAlignment.Left
+                    TextBlock.horizontalAlignment HorizontalAlignment.Left
+                    TextBlock.textWrapping TextWrapping.Wrap               
+                ]
+            )
+        ])
+
+type PopupWindow(text) =
+    inherit HostWindow()
+
+    do
+        base.Title <- $"{name} Launcher"
+        base.Width <- 450
+        base.SizeToContent <- SizeToContent.Height
+        base.CornerRadius <- CornerRadius 15
+        base.Background <- SolidColorBrush darker
+
+        // set icon (not taskbar icon afaict)
+        base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
+        base.Content <- viewPopup text
+
+let view (u: Event<Update>) =
+    Component(fun ctx ->
         let textState = ctx.useState "Initialising launcher..."
         let progress = ctx.useState 0
         let indeterminate = ctx.useState true
 
-        updateEvent.Publish.Subscribe (function
+        u.Publish.Subscribe (function
             | Text t -> textState.Set t
             | Progress p -> progress.Set p
-            | Indeterminate i -> indeterminate.Set i
-            | SuccessMessage message -> ()
-            | ErrorMessage message -> ()
-            | Shutdown -> ())
+            | Indeterminate i -> indeterminate.Set i)
         |> ignore
 
         let textSize = 24
         let padding = 20
 
-        let children: Types.IView list =
-            [ TextBlock.create [
-                  TextBlock.dock Dock.Top
-                  TextBlock.fontSize textSize
-                  TextBlock.fontWeight FontWeight.SemiBold
-                  TextBlock.verticalAlignment VerticalAlignment.Center
-                  TextBlock.horizontalAlignment HorizontalAlignment.Center
-                  TextBlock.text textState.Current
-              ]
-              ProgressBar.create [
-                  ProgressBar.dock Dock.Bottom
-                  ProgressBar.isIndeterminate indeterminate.Current
-                  ProgressBar.value (float progress.Current)
-                  ProgressBar.height 8
-                  ProgressBar.cornerRadius (CornerRadius 4)
-                  ProgressBar.foreground (SolidColorBrush mainaccent)
-                  ProgressBar.background (SolidColorBrush accent)
-                  ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
-                  ProgressBar.verticalAlignment VerticalAlignment.Center
-              ]
-              Image.create [
-                  // centre in the window
-                  Image.dock Dock.Bottom
-                  Image.source (new Imaging.Bitmap(new System.IO.MemoryStream(icon)))
-                  Image.stretch Stretch.Uniform
-                  Image.width 128
-                  Image.height 128
-                  Image.horizontalAlignment HorizontalAlignment.Center
-                  Image.verticalAlignment VerticalAlignment.Center
-              ] ]
+        let children: Types.IView list = [
+            TextBlock.create [
+                TextBlock.dock Dock.Top
+                TextBlock.fontSize textSize
+                TextBlock.fontWeight FontWeight.SemiBold
+                TextBlock.verticalAlignment VerticalAlignment.Center
+                TextBlock.horizontalAlignment HorizontalAlignment.Center
+                TextBlock.text textState.Current
+            ]
+            ProgressBar.create [
+                ProgressBar.dock Dock.Bottom
+                ProgressBar.isIndeterminate indeterminate.Current
+                ProgressBar.value (float progress.Current)
+                ProgressBar.height 8
+                ProgressBar.cornerRadius (CornerRadius 4)
+                ProgressBar.foreground (SolidColorBrush mainaccent)
+                ProgressBar.background (SolidColorBrush accent)
+                ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
+                ProgressBar.verticalAlignment VerticalAlignment.Center
+            ]
+            Image.create [
+                // centre in the window
+                Image.dock Dock.Bottom
+                Image.source (new Imaging.Bitmap(new IO.MemoryStream(icon)))
+                Image.stretch Stretch.Uniform
+                Image.width 128
+                Image.height 128
+                Image.horizontalAlignment HorizontalAlignment.Center
+                Image.verticalAlignment VerticalAlignment.Center
+            ]
+        ]
 
         let panel =
-            DockPanel.create [
-                DockPanel.margin (Thickness padding)
-                DockPanel.children children
-            ]
+            DockPanel.create [ DockPanel.margin (Thickness padding); DockPanel.children children ]
 
         // add background behind panel with some transparency and rounded corners
         let margin = 5
@@ -119,6 +151,7 @@ let view (updateEvent: Event<Update>) =
 type MainWindow(xfn) =
     inherit HostWindow()
 
+    let controlEvent = new Event<Control>()
     let updateEvent = new Event<Update>()
 
     do
@@ -133,13 +166,30 @@ type MainWindow(xfn) =
         base.Background <- SolidColorBrush Colors.Transparent
 
         // set icon (not taskbar icon afaict)
-        base.Icon <- new WindowIcon(new System.IO.MemoryStream(icon))
+        base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
         base.Content <- view updateEvent
 
-    override this.OnLoaded(e: Interactivity.RoutedEventArgs) : unit =
+        controlEvent.Publish.Subscribe (function
+            | SuccessMessage text ->
+                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                    let window = new PopupWindow(text)
+                    window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
+                    window.Show())
+            | ErrorMessage text ->
+                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                    let window = new PopupWindow(text)
+                    window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
+                    window.Show())
+            | Shutdown ->
+                printfn "Byebye"
+                Thread.Sleep 100 // give the UI a chance to update before closing
+                Environment.Exit 1)
+        |> ignore
+
+    override _.OnLoaded _ =
         printfn "Initialized MainWindow"
         // start in another thread
-        async { xfn updateEvent } |> Async.Start
+        async { xfn controlEvent updateEvent } |> Async.Start
         printfn "Finished xfn"
 
 type App(xfn) =
