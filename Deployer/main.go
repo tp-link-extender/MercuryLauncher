@@ -9,7 +9,6 @@ import (
 	"compress/gzip"
 	"crypto/sha3"
 	"encoding/base32"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -17,11 +16,8 @@ import (
 )
 
 const (
-	name     = "Mercury"
-	input    = "./staging"
-	output   = "./setup"
-	launcherName = name + "Launcher.exe"
-	launcher = input + "/" + launcherName
+	input  = "./staging"
+	output = "./setup"
 )
 
 var encoding = base32.NewEncoding("0123456789abcdefghijklmnopqrstuv").WithPadding(base32.NoPadding)
@@ -37,27 +33,10 @@ func compressStagingDir(o *bytes.Buffer) (id string, err error) {
 		return
 	}
 
-	// current unix timestamp
-	now := time.Now().UnixMilli()
-
-	// convert int64 to bytes
-	nowbytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(nowbytes, uint64(now))
-
-	// trim leading zeros
-	for i, b := range nowbytes {
-		if b != 0 {
-			nowbytes = nowbytes[i:]
-			break
-		}
-	}
-
-	enctime := encoding.EncodeToString(nowbytes)
-
-	hash := sha3.SumSHAKE256(o.Bytes(), 4)
+	hash := sha3.SumSHAKE256(o.Bytes(), 8)
 	enchash := encoding.EncodeToString(hash[:])
 
-	return enctime + "-" + enchash, nil
+	return enchash, nil
 }
 
 func writeStagingDir(hash string, o *bytes.Buffer) (err error) {
@@ -101,33 +80,6 @@ func main() {
 
 	fmt.Println("Output directory is ready.")
 
-	// copy launcher to output directory
-	if _, err := os.Stat(launcher); os.IsNotExist(err) {
-		fmt.Printf("Launcher not found in staging directory. Please place the launcher in the staging directory (%sLauncher.exe) or run this script from a different directory.\n", name)
-		os.Exit(1)
-	}
-
-	src, err := os.Open(launcher)
-	if err != nil {
-		fmt.Println("Error opening launcher file:", err)
-		os.Exit(1)
-	}
-	defer src.Close()
-
-	dst, err := os.Create(output + "/" + name + "Launcher.exe")
-	if err != nil {
-		fmt.Println("Error creating launcher file in output directory:", err)
-		os.Exit(1)
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		fmt.Println("Error copying launcher file:", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("Launcher copied to output directory.")
-
 	start := time.Now()
 
 	o := &bytes.Buffer{}
@@ -156,10 +108,10 @@ func main() {
 	}
 	defer versionFile.Close()
 
-	 if _, err = versionFile.WriteString(id); err != nil {
+	if _, err = versionFile.WriteString(id); err != nil {
 		fmt.Println("Error writing to version file:", err)
 		os.Exit(1)
-	 }
+	}
 
 	fmt.Println("version file created with ID", id)
 	fmt.Println("Setup deployer completed successfully.")

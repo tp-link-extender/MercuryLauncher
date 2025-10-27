@@ -4,18 +4,17 @@ open System.IO
 open System.Reflection
 
 let name = "Mercury"
-let domain = "xtcy.dev"
+let domain = "mercs.dev"
 
-// Read the contents of an embedded resource as bytes
-let readEmbeddedResourceAsBytes (resourceName: string) =
+let readEmbeddedResource (resourceName: string) =
     let assembly = Assembly.GetExecutingAssembly()
     use stream = assembly.GetManifestResourceStream resourceName
 
     if isNull stream then
-        failwithf "Resource '%s' not found in assembly." resourceName
+        failwithf $"Resource '{resourceName}' not found in assembly."
     else
         use memoryStream = new MemoryStream()
         stream.CopyTo memoryStream
         memoryStream.ToArray()
 
-let icon = readEmbeddedResourceAsBytes "MercuryLauncher.iconlight.png"
+let icon = readEmbeddedResource "MercuryLauncher.iconlight.png"
