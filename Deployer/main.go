@@ -7,12 +7,18 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"crypto/sha3"
 	"encoding/base32"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multicodec"
+	"github.com/multiformats/go-multihash"
 )
 
 const (
@@ -90,9 +96,24 @@ func main() {
 	}
 
 	fmt.Printf("Staging directory compressed in %s\n", time.Since(start))
+
+	// create CID for the compressed data
+	sum := sha256.Sum256(o.Bytes())
+	fmt.Println("Generated SHA2-256 hash:", hex.EncodeToString(sum[:]), len(sum))
+
+	mh, _ := multihash.Encode(sum[:], multihash.SHA2_256)
+	fmt.Println("Generated multihash:", hex.EncodeToString(mh), len(mh))
+	fmt.Println("Base58 multihash:", multihash.Multihash(mh).B58String())
+
+	c0 := cid.NewCidV0(mh)
+	fmt.Println("Generated CIDv0: ", c0.String())
+
+	c1 := cid.NewCidV1(uint64(multicodec.Raw), mh)
+	fmt.Println("Generated CIDv1: ", c1.String())
+
+	// gzip staging files to output directory
 	start = time.Now()
 
-	// zip staging files to output directory
 	if err := writeStagingDir(id, o); err != nil {
 		fmt.Println("Error compressing staging files:", err)
 		os.Exit(1)
