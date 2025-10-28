@@ -1,6 +1,6 @@
 module github.com/tp-link-extender/MercuryLauncher/Deployer
 
-go 1.25
+go 1.25.3
 
 require (
 	github.com/ipfs/boxo v0.35.0
