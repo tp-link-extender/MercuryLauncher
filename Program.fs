@@ -16,6 +16,7 @@ type ErrorType =
     | VersionTooLong
     | VersionMissing
     | VersionFailedToGet of HttpStatusCode
+    | ClientFailedToGet of HttpStatusCode
     | FailedToConnect of exn
     | FailedToDownload of exn
     | FailedToUnpack of exn
@@ -39,15 +40,13 @@ let joinUrl ticket = $"{url}/game/join?ticket=%s{ticket}"
 let launcherScheme = $"{name.ToLowerInvariant()}-launcher"
 let authTicket = "test" // LRORL
 
-let requestVersion () =
+let requestVersion (client: HttpClient) =
     try
-        use client = new HttpClient()
         use response = (client.GetAsync versionUrl).Result
 
-        if response.StatusCode = HttpStatusCode.OK then
-            Ok(response.Content.ReadAsStringAsync().Result)
-        else
-            Error(VersionFailedToGet response.StatusCode)
+        match response.StatusCode with
+        | HttpStatusCode.OK -> Ok(response.Content.ReadAsStringAsync().Result)
+        | code -> Error(VersionFailedToGet code)
     with
     | :? AggregateException as e -> Error(FailedToConnect e.InnerException)
     | e -> Error(FailedToConnect e)
@@ -81,15 +80,13 @@ let getPath (v: string) =
 
     Ok(path |> Path.Combine, v)
 
-let downloadClient v =
+let downloadClient (client: HttpClient) v =
     try
-        use client = new HttpClient()
         use response = (client.GetAsync $"{setupUrl}/{v}").Result
 
-        if response.StatusCode = HttpStatusCode.OK then
-            Ok(response.Content.ReadAsByteArrayAsync().Result)
-        else
-            Error(VersionFailedToGet response.StatusCode)
+        match response.StatusCode with
+        | HttpStatusCode.OK -> Ok(response.Content.ReadAsByteArrayAsync().Result)
+        | code -> Error(ClientFailedToGet code)
     with
     | :? AggregateException as e -> Error(FailedToDownload e.InnerException)
     | e -> Error(FailedToDownload e)
@@ -200,6 +197,12 @@ let handleError (c: Event<Control>) =
                 $"There was an error when trying to get the version from {name}.\n\
                 The server returned a {code} status code."
         )
+    | ClientFailedToGet code ->
+        c.Trigger(
+            ErrorMessage
+                $"There was an error when trying to download the {name} client.\n\
+                The server returned a {code} status code."
+        )
     | FailedToConnect ex ->
         c.Trigger(
             ErrorMessage
@@ -262,11 +265,11 @@ let trigger (u: Event<Update>) update d =
     u.Trigger update
     Ok d
 
-let downloadAndInstall (u: Event<Update>) (d, p, v) =
+let downloadAndInstall (client: HttpClient) (u: Event<Update>) (d, p, v) =
     if d then
         Ok(p, v)
     else
-        downloadClient v
+        downloadClient client v
         >>= trigger u (Text "Unpacking client...")
         >>= ungzipClient
         >>= trigger u (Text "Installing client...")
@@ -298,8 +301,10 @@ let launchAndComplete (c: Event<Control>) (u: Event<Update>) ticket (p, v) =
 let init ticket (c: Event<Control>) (u: Event<Update>) =
     u.Trigger(Text $"Connecting to {name}...")
 
+    use client = new HttpClient()
+
     let result =
-        requestVersion ()
+        requestVersion client
         >>= log
         >>= validateVersion
         >>= getPath
@@ -308,7 +313,7 @@ let init ticket (c: Event<Control>) (u: Event<Update>) =
         >>= ensurePath
         >>= log
         >>= trigger u (Text "Downloading client...")
-        >>= downloadAndInstall u
+        >>= downloadAndInstall client u
         >>= log
         >>= trigger u (Text "Registering protocol...")
         >>= registerURI
