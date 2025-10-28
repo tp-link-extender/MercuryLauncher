@@ -15,16 +15,18 @@ import (
 
 	"github.com/ipfs/boxo/files"
 	"github.com/ipfs/kubo/client/rpc"
+	"github.com/ipfs/go-cid"
 )
 
 const (
 	staging  = "./staging"
 	versions = "./versions.txt"
+	name     = "Mercury"
 )
 
 var launchers = map[string]string{
-	"MercuryLauncher_win-x64.exe": "./launchers/MercuryLauncher.exe",
-	"MercuryLauncher_linux-x64":   "./launchers/MercuryLauncher",
+	name + "Launcher_win-x64.exe": "./launchers/" + name + "Launcher.exe",
+	name + "Launcher_linux-x64":   "./launchers/" + name + "Launcher",
 }
 
 func compressStagingDir(o *bytes.Buffer) (err error) {
@@ -40,7 +42,7 @@ func compressStagingDir(o *bytes.Buffer) (err error) {
 type fileToUpload struct {
 	name string
 	file files.File
-	cid  string
+	cid  cid.Cid
 }
 
 func uploadAndPin(api *rpc.HttpApi, ftu *fileToUpload, wg *sync.WaitGroup, lastErr *error) {
@@ -55,24 +57,25 @@ func uploadAndPin(api *rpc.HttpApi, ftu *fileToUpload, wg *sync.WaitGroup, lastE
 		return
 	}
 
-	cid := cidFile.RootCid().String()
-	fmt.Println(cid, "added to IPFS")
+	rcid := cidFile.RootCid()
+	cid1 := cid.NewCidV1(rcid.Type(), rcid.Hash())
+	fmt.Println(cid1, "added to IPFS")
 
 	// pin CID
 	if err := api.Pin().Add(ctx, cidFile); err != nil {
 		*lastErr = fmt.Errorf("pin file on local IPFS node: %w", err)
 		return
 	}
-	fmt.Println(cid, "pinned on local node")
+	fmt.Println(cid1, "pinned on local node")
 
 	// announce provision of files (this takes a while!)
 	if err := api.Routing().Provide(ctx, cidFile); err != nil {
 		*lastErr = fmt.Errorf("provide file on network: %w", err)
 		return
 	}
-	fmt.Println(cid, "provided on network")
+	fmt.Println(cid1, "provided on network")
 
-	ftu.cid = cid
+	ftu.cid = cid1
 }
 
 func main() {
