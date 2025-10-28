@@ -7,18 +7,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"crypto/sha3"
-	"encoding/base32"
-	"encoding/hex"
+	"context"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
-	"github.com/ipfs/go-cid"
-	"github.com/multiformats/go-multicodec"
-	"github.com/multiformats/go-multihash"
+	"github.com/ipfs/boxo/files"
+	"github.com/ipfs/kubo/client/rpc"
 )
 
 const (
@@ -26,38 +21,14 @@ const (
 	output = "./setup"
 )
 
-var encoding = base32.NewEncoding("0123456789abcdefghijklmnopqrstuv").WithPadding(base32.NoPadding)
-
-func compressStagingDir(o *bytes.Buffer) (id string, err error) {
+func compressStagingDir(o *bytes.Buffer) (err error) {
 	gz, _ := gzip.NewWriterLevel(o, gzip.BestCompression)
 	defer gz.Close()
 
 	w := tar.NewWriter(gz)
 	defer w.Close()
 
-	if err = w.AddFS(os.DirFS(input)); err != nil {
-		return
-	}
-
-	hash := sha3.SumSHAKE256(o.Bytes(), 8)
-	enchash := encoding.EncodeToString(hash[:])
-
-	return enchash, nil
-}
-
-func writeStagingDir(hash string, o *bytes.Buffer) (err error) {
-	// write to output file
-	outputFile, err := os.Create(output + "/" + hash)
-	if err != nil {
-		return fmt.Errorf("error creating output file: %w", err)
-	}
-	defer outputFile.Close()
-
-	if _, err = io.Copy(outputFile, o); err != nil {
-		return fmt.Errorf("error writing to output file: %w", err)
-	}
-
-	return
+	return w.AddFS(os.DirFS(input))
 }
 
 func main() {
@@ -89,37 +60,37 @@ func main() {
 	start := time.Now()
 
 	o := &bytes.Buffer{}
-	id, err := compressStagingDir(o)
-	if err != nil {
+	if err := compressStagingDir(o); err != nil {
 		fmt.Println("Error compressing staging directory:", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Staging directory compressed in %s\n", time.Since(start))
 
-	// create CID for the compressed data
-	sum := sha256.Sum256(o.Bytes())
-	fmt.Println("Generated SHA2-256 hash:", hex.EncodeToString(sum[:]), len(sum))
+	// Upload compressed data to IPFS
+	file := files.NewReaderFile(o)
 
-	mh, _ := multihash.Encode(sum[:], multihash.SHA2_256)
-	fmt.Println("Generated multihash:", hex.EncodeToString(mh), len(mh))
-	fmt.Println("Base58 multihash:", multihash.Multihash(mh).B58String())
-
-	c0 := cid.NewCidV0(mh)
-	fmt.Println("Generated CIDv0: ", c0.String())
-
-	c1 := cid.NewCidV1(uint64(multicodec.Raw), mh)
-	fmt.Println("Generated CIDv1: ", c1.String())
-
-	// gzip staging files to output directory
-	start = time.Now()
-
-	if err := writeStagingDir(id, o); err != nil {
-		fmt.Println("Error compressing staging files:", err)
+	// get local IPFS node API
+	api, err := rpc.NewLocalApi()
+	if err != nil {
+		fmt.Println("Error connecting to local IPFS node:", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Staging files written to output directory in %s\n", time.Since(start))
+	cidFile, err := api.Unixfs().Add(context.Background(), file)
+	if err != nil {
+		fmt.Println("Error adding file to IPFS via local node:", err)
+		os.Exit(1)
+	}
+
+	cid := cidFile.RootCid().String()
+	fmt.Println("Generated IPFS CID via local node:", cid)
+
+	// pin CID
+	if err := api.Pin().Add(context.Background(), cidFile); err != nil {
+		fmt.Println("Error pinning file on local IPFS node:", err)
+		os.Exit(1)
+	}
 
 	// create or modify version.txt in output directory
 	versionFile, err := os.Create(output + "/version")
@@ -129,11 +100,11 @@ func main() {
 	}
 	defer versionFile.Close()
 
-	if _, err = versionFile.WriteString(id); err != nil {
+	if _, err = versionFile.WriteString(cid); err != nil {
 		fmt.Println("Error writing to version file:", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("version file created with ID", id)
+	fmt.Println("version file created with ID", cid)
 	fmt.Println("Setup deployer completed successfully.")
 }
