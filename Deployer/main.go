@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/ipfs/boxo/files"
@@ -36,32 +37,42 @@ func compressStagingDir(o *bytes.Buffer) (err error) {
 	return w.AddFS(os.DirFS(staging))
 }
 
-func uploadAndPin(api *rpc.HttpApi, file files.File) (string, error) {
-	defer file.Close()
+type fileToUpload struct {
+	name string
+	file files.File
+	cid  string
+}
+
+func uploadAndPin(api *rpc.HttpApi, ftu *fileToUpload, wg *sync.WaitGroup, lastErr *error) {
+	defer wg.Done()
+	defer ftu.file.Close()
 
 	ctx := context.Background()
 
-	cidFile, err := api.Unixfs().Add(ctx, file)
+	cidFile, err := api.Unixfs().Add(ctx, ftu.file)
 	if err != nil {
-		return "", fmt.Errorf("add file to local IPFS node: %w", err)
+		*lastErr = fmt.Errorf("add file to local IPFS node: %w", err)
+		return
 	}
 
 	cid := cidFile.RootCid().String()
 	fmt.Println(cid, "added to IPFS")
 
-	// announce provision of files (this takes a while!)
-	// if err := api.Routing().Provide(ctx, cidFile); err != nil {
-	// 	return "", fmt.Errorf("provide file on network: %w", err)
-	// }
-	// fmt.Println(cid, "provided on network")
-
 	// pin CID
 	if err := api.Pin().Add(ctx, cidFile); err != nil {
-		return "", fmt.Errorf("pin file on local IPFS node: %w", err)
+		*lastErr = fmt.Errorf("pin file on local IPFS node: %w", err)
+		return
 	}
 	fmt.Println(cid, "pinned on local node")
 
-	return cid, nil
+	// announce provision of files (this takes a while!)
+	if err := api.Routing().Provide(ctx, cidFile); err != nil {
+		*lastErr = fmt.Errorf("provide file on network: %w", err)
+		return
+	}
+	fmt.Println(cid, "provided on network")
+
+	ftu.cid = cid
 }
 
 func main() {
@@ -100,6 +111,8 @@ func main() {
 
 	fmt.Printf("Staging directory compressed in %s\n", time.Since(start))
 
+	start = time.Now()
+
 	// Create versions file
 	versionsFile, err := os.Create(versions)
 	if err != nil {
@@ -116,12 +129,12 @@ func main() {
 	}
 
 	// Upload compressed setup to IPFS
-	cid, err := uploadAndPin(api, files.NewReaderFile(o))
-	if err != nil {
-		fmt.Println("Error uploading and pinning setup:", err)
-		os.Exit(1)
+	filesToUpload := []*fileToUpload{
+		{
+			name: "setup",
+			file: files.NewReaderFile(o),
+		},
 	}
-	fmt.Fprintf(versionsFile, "%s setup\n", cid)
 
 	// Upload launchers to IPFS
 	for name, path := range launchers {
@@ -132,13 +145,31 @@ func main() {
 		}
 		defer launcherFile.Close()
 
-		lcid, err := uploadAndPin(api, files.NewReaderFile(launcherFile))
-		if err != nil {
-			fmt.Printf("Error uploading and pinning launcher for %s: %v\n", name, err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(versionsFile, "%s %s\n", lcid, name)
+		filesToUpload = append(filesToUpload, &fileToUpload{
+			name: name,
+			file: files.NewReaderFile(launcherFile),
+		})
 	}
+
+	var wg sync.WaitGroup
+	var lastErr error
+
+	wg.Add(len(filesToUpload))
+	for _, ftu := range filesToUpload {
+		go uploadAndPin(api, ftu, &wg, &lastErr)
+	}
+	wg.Wait()
+
+	if lastErr != nil {
+		fmt.Println("Error uploading and pinning files:", lastErr)
+		os.Exit(1)
+	}
+
+	for _, ftu := range filesToUpload {
+		fmt.Fprintf(versionsFile, "%s %s\n", ftu.cid, ftu.name)
+	}
+
+	fmt.Printf("All files uploaded and pinned in %s\n", time.Since(start))
 
 	fmt.Println("Setup deployer completed successfully.")
 }
