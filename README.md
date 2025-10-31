@@ -11,10 +11,8 @@ Comes with approximate sizes
 `dotnet publish --no-self-contained --nologo -o ./out -r win-x64`  
 13.47MB + .NET 9
 
-`dotnet publish --nologo -o ./out -r win-x64`  
-80.95MB  
-21.95MB trimmed  
-21.91MB trimmed + no symbols
+`dotnet publish --self-contained --nologo -o ./out -r win-x64`  
+20.48MB trimmed + no symbols
 
 ### Linux
 
@@ -22,6 +20,4 @@ Comes with approximate sizes
 13.33MB + .NET 9
 
 `dotnet publish --nologo -o ./out -r linux-x64`  
-81.09MB  
-23.69MB trimmed  
-23.64MB trimmed + no symbols
+20.71MB trimmed + no symbols
