@@ -12,7 +12,7 @@
 			 <PublishAot>true</PublishAot>
 		-->
 
-		<TargetFramework>net9.0</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
 		<RootNamespace>MercuryLauncher</RootNamespace>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
 		<PublishTrimmed>true</PublishTrimmed>

@@ -24,7 +24,7 @@ type ErrorType =
     | ClientNotFound
     | FailedToRemoveOldVersions
     | FailedToLaunch of exn
-    | BadLaunch of exn
+    | FailedToRegister of exn
 
 let (>>=) f x = bind x f
 
@@ -128,7 +128,7 @@ let launch ticket (p, v) =
         Error(FailedToLaunch e)
 
 // Register the protocol handler to this application
-let registerURI (p, v) =
+let registerURIWindows (p, v) =
     try
         let key =
             Registry.CurrentUser.CreateSubKey($"Software\\Classes\\{launcherScheme}", true)
@@ -146,7 +146,59 @@ let registerURI (p, v) =
 
         Ok(p, v)
     with e ->
-        Error(BadLaunch e)
+        Error(FailedToRegister e)
+
+// Register with xdg-settings
+let registerURILinux (p, v) =
+    try
+        let applicationsDir =
+            let xdg = Environment.GetEnvironmentVariable "XDG_DATA_HOME"
+
+            if String.IsNullOrEmpty xdg then
+                Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "applications")
+            else
+                Path.Combine(xdg, "applications")
+
+        Directory.CreateDirectory applicationsDir |> ignore
+
+        let desktopFileName = $"{name.ToLowerInvariant()}-launcher.desktop"
+        let desktopFilePath = Path.Combine(applicationsDir, desktopFileName)
+        let execPath = launcherPath p v
+
+        let desktopContents =
+            $"[Desktop Entry]\n\
+                Name={name} Launcher\n\
+                Comment=Handle {launcherScheme} links\n\
+                Exec=\"{execPath}\" %%u\n\
+                Type=Application\n\
+                Terminal=false\n\
+                NoDisplay=true\n\
+                Categories=Utility;\n\
+                MimeType=x-scheme-handler/{launcherScheme};\n"
+
+        File.WriteAllText(desktopFilePath, desktopContents)
+
+        // Tell the desktop environment that this .desktop file should handle the scheme
+        let psi =
+            ProcessStartInfo(
+                FileName = "xdg-mime",
+                Arguments = $"default {desktopFileName} x-scheme-handler/{launcherScheme}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            )
+
+        use proc = Process.Start psi
+        proc.WaitForExit()
+
+        if proc.ExitCode <> 0 then
+            let err = proc.StandardError.ReadToEnd()
+            Error(FailedToRegister (Exception $"xdg-mime failed: {err}"))
+        else
+            Ok(p, v)
+    with e ->
+        Error(FailedToRegister e)
 
 let checkThatItLaunchedCorrectly (p: Process) =
     try
@@ -253,10 +305,10 @@ let handleError (c: Event<Control>) =
                 \n\
                 Details: {ex.Message}"
         )
-    | BadLaunch ex ->
+    | FailedToRegister ex ->
         c.Trigger(
             ErrorMessage
-                $"The {name} client launched, but it did not start correctly.\n\
+                $"Failed to register the {name} protocol handler.\n\
                 \n\
                 Details: {ex.Message}"
         )
@@ -298,6 +350,10 @@ let launchAndComplete (c: Event<Control>) (u: Event<Update>) ticket (p, v) =
         >>= trigger u (Text $"Clearing old versions...")
         >>= clearOldVersions p v
 
+let yes x a =
+    x ()
+    Ok a
+
 let init ticket (c: Event<Control>) (u: Event<Update>) =
     u.Trigger(Text $"Connecting to {name}...")
 
@@ -315,8 +371,13 @@ let init ticket (c: Event<Control>) (u: Event<Update>) =
         >>= trigger u (Text "Downloading client...")
         >>= downloadAndInstall client u
         >>= log
+        >>= yes (fun () -> log "register time" |> ignore)
         >>= trigger u (Text "Registering protocol...")
-        >>= registerURI
+        >>= (if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                 registerURIWindows
+             else
+                 registerURILinux)
+        >>= yes (fun () -> log "registered" |> ignore)
         >>= launchAndComplete c u ticket
 
     match result with
