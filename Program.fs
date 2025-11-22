@@ -64,7 +64,10 @@ let versionPath s v =
     Path.Combine(versionsPath s, $"version-%s{v}")
 
 let launcherPath s v =
-    Path.Combine(versionPath s v, $"{name}Launcher.exe")
+    if Environment.OSVersion.Platform = PlatformID.Win32NT then
+        Path.Combine(versionPath s v, $"{name}Launcher.exe")
+    else
+        Path.Combine(versionPath s v, $"{name}Launcher")
 
 let playerPath s v =
     Path.Combine(versionPath s v, $"{name}PlayerBeta.exe")
@@ -149,20 +152,82 @@ let registerURIWindows (p, v) =
         Error(FailedToRegister e)
 
 // Register with xdg-settings
+let writeDesktopFileLinux (contents: string) (filename: string) (filepath: string) =
+    // we need to do this with elevated permissions
+    let tempFile = Path.GetTempFileName()
+    File.WriteAllText(tempFile, contents)
+
+    let sudoPsi =
+        ProcessStartInfo(
+            FileName = "sudo",
+            Arguments = $"cp \"{tempFile}\" \"{filepath}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        )
+
+    use sudoProc = Process.Start sudoPsi
+    sudoProc.WaitForExit()
+
+    File.Delete tempFile
+
+    if sudoProc.ExitCode <> 0 then
+        let err = sudoProc.StandardError.ReadToEnd()
+        Error(FailedToRegister (Exception $"sudo echo failed: {err}"))
+    else
+        Ok filename
+
+let registerApplicationLinux (p, v) filename =
+    let psi =
+        ProcessStartInfo(
+            FileName = "xdg-settings",
+            Arguments = $"set default-url-scheme-handler {launcherScheme} {filename}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        )
+    
+    printfn $"args = {psi.Arguments}"
+
+    use proc = Process.Start psi
+    proc.WaitForExit()
+
+    if proc.ExitCode <> 0 then
+        let err = proc.StandardError.ReadToEnd()
+        Error(FailedToRegister (Exception $"xdg-settings failed: {err}"))
+    else
+        Ok()
+
+    
+let xdgMimeHandleSchema (desktopFilename: string) () =
+    // Tell the desktop environment that this .desktop file should handle the scheme
+    let psi =
+        ProcessStartInfo(
+            FileName = "xdg-mime",
+            Arguments = $"default {desktopFilename} x-scheme-handler/{launcherScheme}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        )
+
+    use proc = Process.Start psi
+    proc.WaitForExit()
+
+    if proc.ExitCode <> 0 then
+        let err = proc.StandardError.ReadToEnd()
+        Error(FailedToRegister (Exception $"xdg-mime failed: {err}"))
+    else
+        Ok()
+
 let registerURILinux (p, v) =
     try
-        let applicationsDir =
-            let xdg = Environment.GetEnvironmentVariable "XDG_DATA_HOME"
-
-            if String.IsNullOrEmpty xdg then
-                Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "applications")
-            else
-                Path.Combine(xdg, "applications")
+        let applicationsDir = "/usr/share/applications"
 
         Directory.CreateDirectory applicationsDir |> ignore
 
-        let desktopFileName = $"{name.ToLowerInvariant()}-launcher.desktop"
-        let desktopFilePath = Path.Combine(applicationsDir, desktopFileName)
         let execPath = launcherPath p v
 
         let desktopContents =
@@ -172,31 +237,19 @@ let registerURILinux (p, v) =
                 Exec=\"{execPath}\" %%u\n\
                 Type=Application\n\
                 Terminal=false\n\
-                NoDisplay=true\n\
+                NoDisplay=false\n\
                 Categories=Utility;\n\
                 MimeType=x-scheme-handler/{launcherScheme};\n"
 
-        File.WriteAllText(desktopFilePath, desktopContents)
+        printfn $"{desktopContents}"
 
-        // Tell the desktop environment that this .desktop file should handle the scheme
-        let psi =
-            ProcessStartInfo(
-                FileName = "xdg-mime",
-                Arguments = $"default {desktopFileName} x-scheme-handler/{launcherScheme}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            )
+        let desktopFilename = $"{name.ToLowerInvariant()}-launcher.desktop"
+        let desktopFilepath = Path.Combine(applicationsDir, desktopFilename)
 
-        use proc = Process.Start psi
-        proc.WaitForExit()
-
-        if proc.ExitCode <> 0 then
-            let err = proc.StandardError.ReadToEnd()
-            Error(FailedToRegister (Exception $"xdg-mime failed: {err}"))
-        else
-            Ok(p, v)
+        writeDesktopFileLinux desktopContents desktopFilename desktopFilepath
+        >>= registerApplicationLinux (p, v)
+        >>= xdgMimeHandleSchema desktopFilename
+        >>= fun () -> Ok(p, v)
     with e ->
         Error(FailedToRegister e)
 
