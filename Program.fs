@@ -22,7 +22,7 @@ type ErrorType =
     | FailedToUnpack of exn
     | FailedToInstall of exn
     | ClientNotFound
-    | FailedToRemoveOldVersions
+    | FailedToRemoveOldVersions of int
     | FailedToLaunch of exn
     | FailedToRegister of exn
 
@@ -75,9 +75,15 @@ let playerPath s v =
 let studioPath s v =
     Path.Combine(versionPath s v, $"{name}StudioBeta.exe")
 
+let appData() =
+    if Environment.OSVersion.Platform = PlatformID.Win32NT then
+        Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
+    else
+        "/usr/share"
+
 let getPath (v: string) =
     let path = [|
-        Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
+        appData()
         name
     |]
 
@@ -106,27 +112,82 @@ let ungzipClient (data: byte array) =
     with e ->
         Error(FailedToUnpack e)
 
+let suMove (src: string) (dst: string) =
+    let psi =
+        ProcessStartInfo(
+            FileName = "pkexec",
+            Arguments = $"mv \"{src}\" \"{dst}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        )
+
+    let proc = Process.Start psi
+    if proc = null then
+        Error "Failed to start move process"
+    else
+        proc.WaitForExit()
+        let exitCode = proc.ExitCode
+        let error = proc.StandardError.ReadToEnd()
+        Ok (exitCode, error)
+
 let untarClient p v (tar: MemoryStream) =
     let path = versionPath p v
 
     try
-        // create the directory if it doesn't exist
-        Directory.CreateDirectory path |> ignore
+        let tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName())
+        Directory.CreateDirectory tempDir |> ignore
+
+        printfn $"Extracting to temp dir: {tempDir}"
 
         // extract the tar file
-        Formats.Tar.TarFile.ExtractToDirectory(tar, path, true)
+        Formats.Tar.TarFile.ExtractToDirectory(tar, tempDir, true)
 
-        Ok(p, v)
+        printfn $"Moving to final dir: {path}"
+
+        // move the temp directory to the final location
+        if Environment.OSVersion.Platform = PlatformID.Win32NT then
+            // on windows we can just do a normal move
+            if Directory.Exists path then
+                Directory.Delete(path, true)   
+            Directory.Move(tempDir, path)
+            Ok(p, v)
+        else
+            // on linux we need sudo permissions to move to /usr/share
+            match suMove tempDir path with
+            | Ok (exitCode, error) ->
+                printfn $"move exited with code: {exitCode}" 
+                if exitCode <> 0 then
+                    Error(FailedToInstall (Exception $"move failed: {error}"))
+                else
+                    Ok(p, v)
+            | Error msg ->
+                Error(FailedToInstall (Exception msg))
     with e ->
         Error(FailedToInstall e)
 
 let ensurePath (p, v) = Ok(File.Exists(playerPath p v), p, v)
 
+let startProcess (exePath: string) (args: string array) =
+    Process.Start(exePath, args)
+
+let startProcessWine (exePath: string) (args: string array) =
+    let allArgs =
+        Array.append [| exePath |] args
+
+    Process.Start("wine", String.Join(" ", allArgs))
+
 let launch ticket (p, v) =
     let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket |]
 
     try
-        Ok(Process.Start(playerPath p v, procArgs))
+        let fn =
+            if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                startProcess
+            else
+                startProcessWine
+        Ok (fn  (playerPath p v) procArgs)
     with e ->
         Error(FailedToLaunch e)
 
@@ -151,113 +212,82 @@ let registerURIWindows (p, v) =
     with e ->
         Error(FailedToRegister e)
 
-// Register with xdg-settings
-let writeDesktopFileLinux (contents: string) (filename: string) (filepath: string) =
-    // we need to do this with elevated permissions
-    let tempFile = Path.GetTempFileName()
-    File.WriteAllText(tempFile, contents)
-
-    let sudoPsi =
-        ProcessStartInfo(
-            FileName = "sudo",
-            Arguments = $"cp \"{tempFile}\" \"{filepath}\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        )
-
-    use sudoProc = Process.Start sudoPsi
-    sudoProc.WaitForExit()
-
-    File.Delete tempFile
-
-    if sudoProc.ExitCode <> 0 then
-        let err = sudoProc.StandardError.ReadToEnd()
-        Error(FailedToRegister (Exception $"sudo echo failed: {err}"))
+let addToMimeapps (dir: string) (filename: string)=
+    let mimeappsList = Path.Combine(dir, "mimeapps.list")
+    if File.Exists mimeappsList then
+        File.AppendAllText(mimeappsList,     $"\nx-scheme-handler/{launcherScheme}={filename};\n")
     else
-        Ok filename
-
-let registerApplicationLinux (p, v) filename =
-    let psi =
-        ProcessStartInfo(
-            FileName = "xdg-settings",
-            Arguments = $"set default-url-scheme-handler {launcherScheme} {filename}",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        )
-    
-    printfn $"args = {psi.Arguments}"
-
-    use proc = Process.Start psi
-    proc.WaitForExit()
-
-    if proc.ExitCode <> 0 then
-        let err = proc.StandardError.ReadToEnd()
-        Error(FailedToRegister (Exception $"xdg-settings failed: {err}"))
-    else
-        Ok()
-
-    
-let xdgMimeHandleSchema (desktopFilename: string) () =
-    // Tell the desktop environment that this .desktop file should handle the scheme
-    let psi =
-        ProcessStartInfo(
-            FileName = "xdg-mime",
-            Arguments = $"default {desktopFilename} x-scheme-handler/{launcherScheme}",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        )
-
-    use proc = Process.Start psi
-    proc.WaitForExit()
-
-    if proc.ExitCode <> 0 then
-        let err = proc.StandardError.ReadToEnd()
-        Error(FailedToRegister (Exception $"xdg-mime failed: {err}"))
-    else
-        Ok()
+        File.WriteAllText(mimeappsList, 
+            $"[Default Applications]\n\
+            x-scheme-handler/{launcherScheme}={filename};\n")
 
 let registerURILinux (p, v) =
+    let applicationsDir = "/usr/share/applications"
+
+    Directory.CreateDirectory applicationsDir |> ignore
+
+    printfn $"Applications dir: {applicationsDir}"
+    let execPath = launcherPath p v
+
+    let desktopContents =
+        $"[Desktop Entry]\n\
+            Name={name} Launcher\n\
+            Comment=Handle {launcherScheme} links\n\
+            Exec=\"{execPath}\" %%U\n\
+            Type=Application\n\
+            Terminal=false\n\
+            NoDisplay=false\n\
+            Categories=Utility;Application;\n\
+            URL={launcherScheme}:\n\
+            MimeType=x-scheme-handler/{launcherScheme};\n"
+
+    printfn $"{desktopContents}"
+
+    let desktopFilename = $"{name.ToLowerInvariant()}-launcher.desktop"
+    let desktopPath = Path.Combine(applicationsDir, desktopFilename)
+
     try
-        let applicationsDir = "/usr/share/applications"
+        File.WriteAllText(desktopPath, desktopContents)
+        addToMimeapps applicationsDir desktopFilename
 
-        Directory.CreateDirectory applicationsDir |> ignore
+        // also write to local applications dir
+        let localApplicationsDir =
+            Path.Combine(
+                Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData,
+                "applications"
+            )
+        Directory.CreateDirectory localApplicationsDir |> ignore
 
-        let execPath = launcherPath p v
+        let localDesktopPath = Path.Combine(localApplicationsDir, desktopFilename)
+        File.WriteAllText(localDesktopPath, desktopContents)
+        addToMimeapps localApplicationsDir desktopFilename
 
-        let desktopContents =
-            $"[Desktop Entry]\n\
-                Name={name} Launcher\n\
-                Comment=Handle {launcherScheme} links\n\
-                Exec=\"{execPath}\" %%u\n\
-                Type=Application\n\
-                Terminal=false\n\
-                NoDisplay=false\n\
-                Categories=Utility;\n\
-                MimeType=x-scheme-handler/{launcherScheme};\n"
+        // now register the handler
+        let psi =
+            ProcessStartInfo(
+                FileName = "xdg-mime",
+                Arguments = $"default {desktopFilename} x-scheme-handler/{launcherScheme}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            )
 
-        printfn $"{desktopContents}"
+        use proc = Process.Start psi
+        proc.WaitForExit()
 
-        let desktopFilename = $"{name.ToLowerInvariant()}-launcher.desktop"
-        let desktopFilepath = Path.Combine(applicationsDir, desktopFilename)
+        // Since that all didn't seem to work, I'm seriously out of ideas now
 
-        writeDesktopFileLinux desktopContents desktopFilename desktopFilepath
-        >>= registerApplicationLinux (p, v)
-        >>= xdgMimeHandleSchema desktopFilename
-        >>= fun () -> Ok(p, v)
+        if proc.ExitCode <> 0 then
+            let err = proc.StandardError.ReadToEnd()
+            Error(FailedToRegister (Exception $"xdg-mime failed: {err}"))
+        else
+            Ok(p, v)
     with e ->
         Error(FailedToRegister e)
 
 let checkThatItLaunchedCorrectly (p: Process) =
-    try
-        if p.HasExited then Error ClientNotFound else Ok()
-    with e ->
-        Error(FailedToLaunch e)
+    if p.HasExited then Error ClientNotFound else Ok()
 
 let clearOldVersions (p: string) v () =
     let path = versionsPath p
@@ -278,7 +308,7 @@ let clearOldVersions (p: string) v () =
         if failedVersions = 0 then
             Ok()
         else
-            Error FailedToRemoveOldVersions
+            Error (FailedToRemoveOldVersions failedVersions)
     else
         Error ClientNotFound
 
@@ -345,10 +375,11 @@ let handleError (c: Event<Control>) =
                 $"The {name} client was not found.\n\
                 Please make sure that the client is installed and try again."
         )
-    | FailedToRemoveOldVersions ->
+    | FailedToRemoveOldVersions n ->
+        let ex =     if n = 1 then "" else "s"
         c.Trigger(
             ErrorMessage
-                $"Failed to remove old versions of the {name} client.\n\
+                $"Failed to remove {n} old version{ex} of the {name} client.\n\
                 Please make sure write permissions are given to the versions directory."
         )
     | FailedToLaunch ex ->
