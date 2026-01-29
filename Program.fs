@@ -75,26 +75,61 @@ let playerPath s v =
 let studioPath s v =
     Path.Combine(versionPath s v, $"{name}StudioBeta.exe")
 
-let appData() =
+let appData () =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
         Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
     else
         "/usr/share"
 
 let getPath (v: string) =
-    let path = [|
-        appData()
-        name
-    |]
+    let path = [| appData (); name |]
 
     Ok(path |> Path.Combine, v)
 
-let downloadClient (client: HttpClient) v =
+let downloadBuffer = 8192
+
+let rec readStream (write: byte[] -> int -> unit) (s: Stream) =
+    let buffer = Array.zeroCreate<byte> downloadBuffer
+    let r = s.Read(buffer, 0, buffer.Length)
+
+    if r > 0 then
+        write buffer r
+        readStream write s
+    else
+        ()
+
+let downloadClient (client: HttpClient) (u: Event<Update>) v =
     try
-        use response = (client.GetAsync $"{setupUrl}/{v}").Result
+        use response =
+            client.GetAsync($"{setupUrl}/{v}", HttpCompletionOption.ResponseHeadersRead).Result
+
+        u.Trigger(Indeterminate false)
 
         match response.StatusCode with
-        | HttpStatusCode.OK -> Ok(response.Content.ReadAsByteArrayAsync().Result)
+        | HttpStatusCode.OK ->
+            let contentLength = response.Content.Headers.ContentLength
+
+            let upd =
+                match Option.ofNullable contentLength with
+                | Some length ->
+                    fun (r: int64) ->
+                        let progress = float (r * 100L) / float length
+                        printfn $"Download progress: {progress:F2}%%"
+                // MEMORY LEEEEEEEEEEEAK!!!!!!!!!!!!!!!!!!
+                // u.Trigger(Progress progress)
+                // u.Trigger(Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)")
+                | None -> fun (_: int64) -> ()
+
+            use stream = response.Content.ReadAsStreamAsync().Result
+            use ms = new MemoryStream()
+
+            let write (b: byte[]) (r: int) =
+                ms.Write(b, 0, r)
+                upd ms.Length
+
+            readStream write stream
+
+            Ok(ms.ToArray())
         | code -> Error(ClientFailedToGet code)
     with
     | :? AggregateException as e -> Error(FailedToDownload e.InnerException)
@@ -113,10 +148,13 @@ let ungzipClient (data: byte array) =
         Error(FailedToUnpack e)
 
 let suMove (src: string) (dst: string) =
+    let cmd = $"mkdir -p \"{dst}\" && mv -f \"{src}/*\" \"{dst}\""
+    let cmd2 = cmd.Replace("\"", "\\\"")
+
     let psi =
         ProcessStartInfo(
             FileName = "pkexec",
-            Arguments = $"mv \"{src}\" \"{dst}\"",
+            Arguments = $"sh -c \"{cmd2}\"",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -124,13 +162,14 @@ let suMove (src: string) (dst: string) =
         )
 
     let proc = Process.Start psi
+
     if proc = null then
         Error "Failed to start move process"
     else
         proc.WaitForExit()
         let exitCode = proc.ExitCode
         let error = proc.StandardError.ReadToEnd()
-        Ok (exitCode, error)
+        Ok(exitCode, error)
 
 let untarClient p v (tar: MemoryStream) =
     let path = versionPath p v
@@ -150,31 +189,30 @@ let untarClient p v (tar: MemoryStream) =
         if Environment.OSVersion.Platform = PlatformID.Win32NT then
             // on windows we can just do a normal move
             if Directory.Exists path then
-                Directory.Delete(path, true)   
+                Directory.Delete(path, true)
+
             Directory.Move(tempDir, path)
             Ok(p, v)
         else
             // on linux we need sudo permissions to move to /usr/share
             match suMove tempDir path with
-            | Ok (exitCode, error) ->
-                printfn $"move exited with code: {exitCode}" 
+            | Ok(exitCode, error) ->
+                printfn $"move exited with code: {exitCode}"
+
                 if exitCode <> 0 then
-                    Error(FailedToInstall (Exception $"move failed: {error}"))
+                    Error(FailedToInstall(Exception $"move failed: {error}"))
                 else
                     Ok(p, v)
-            | Error msg ->
-                Error(FailedToInstall (Exception msg))
+            | Error msg -> Error(FailedToInstall(Exception msg))
     with e ->
         Error(FailedToInstall e)
 
 let ensurePath (p, v) = Ok(File.Exists(playerPath p v), p, v)
 
-let startProcess (exePath: string) (args: string array) =
-    Process.Start(exePath, args)
+let startProcess (exePath: string) (args: string array) = Process.Start(exePath, args)
 
 let startProcessWine (exePath: string) (args: string array) =
-    let allArgs =
-        Array.append [| exePath |] args
+    let allArgs = Array.append [| exePath |] args
 
     Process.Start("wine", String.Join(" ", allArgs))
 
@@ -187,7 +225,8 @@ let launch ticket (p, v) =
                 startProcess
             else
                 startProcessWine
-        Ok (fn  (playerPath p v) procArgs)
+
+        Ok(fn (playerPath p v) procArgs)
     with e ->
         Error(FailedToLaunch e)
 
@@ -212,14 +251,17 @@ let registerURIWindows (p, v) =
     with e ->
         Error(FailedToRegister e)
 
-let addToMimeapps (dir: string) (filename: string)=
+let addToMimeapps (dir: string) (filename: string) =
     let mimeappsList = Path.Combine(dir, "mimeapps.list")
+
     if File.Exists mimeappsList then
-        File.AppendAllText(mimeappsList,     $"\nx-scheme-handler/{launcherScheme}={filename};\n")
+        File.AppendAllText(mimeappsList, $"\nx-scheme-handler/{launcherScheme}={filename};\n")
     else
-        File.WriteAllText(mimeappsList, 
+        File.WriteAllText(
+            mimeappsList,
             $"[Default Applications]\n\
-            x-scheme-handler/{launcherScheme}={filename};\n")
+            x-scheme-handler/{launcherScheme}={filename};\n"
+        )
 
 let registerURILinux (p, v) =
     let applicationsDir = "/usr/share/applications"
@@ -252,10 +294,8 @@ let registerURILinux (p, v) =
 
         // also write to local applications dir
         let localApplicationsDir =
-            Path.Combine(
-                Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData,
-                "applications"
-            )
+            Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "applications")
+
         Directory.CreateDirectory localApplicationsDir |> ignore
 
         let localDesktopPath = Path.Combine(localApplicationsDir, desktopFilename)
@@ -280,7 +320,7 @@ let registerURILinux (p, v) =
 
         if proc.ExitCode <> 0 then
             let err = proc.StandardError.ReadToEnd()
-            Error(FailedToRegister (Exception $"xdg-mime failed: {err}"))
+            Error(FailedToRegister(Exception $"xdg-mime failed: {err}"))
         else
             Ok(p, v)
     with e ->
@@ -308,7 +348,7 @@ let clearOldVersions (p: string) v () =
         if failedVersions = 0 then
             Ok()
         else
-            Error (FailedToRemoveOldVersions failedVersions)
+            Error(FailedToRemoveOldVersions failedVersions)
     else
         Error ClientNotFound
 
@@ -376,7 +416,8 @@ let handleError (c: Event<Control>) =
                 Please make sure that the client is installed and try again."
         )
     | FailedToRemoveOldVersions n ->
-        let ex =     if n = 1 then "" else "s"
+        let ex = if n = 1 then "" else "s"
+
         c.Trigger(
             ErrorMessage
                 $"Failed to remove {n} old version{ex} of the {name} client.\n\
@@ -405,7 +446,7 @@ let downloadAndInstall (client: HttpClient) (u: Event<Update>) (d, p, v) =
     if d then
         Ok(p, v)
     else
-        downloadClient client v
+        downloadClient client u v
         >>= trigger u (Text "Unpacking client...")
         >>= ungzipClient
         >>= trigger u (Text "Installing client...")

@@ -16,7 +16,7 @@ open System.Threading
 
 type Update =
     | Text of string
-    | Progress of int
+    | Progress of float
     | Indeterminate of bool
 
 type Control =
@@ -47,7 +47,7 @@ let viewPopup text =
                     TextBlock.foreground (SolidColorBrush Colors.White)
                     TextBlock.textAlignment TextAlignment.Left
                     TextBlock.horizontalAlignment HorizontalAlignment.Left
-                    TextBlock.textWrapping TextWrapping.Wrap               
+                    TextBlock.textWrapping TextWrapping.Wrap
                 ]
             )
         ])
@@ -69,7 +69,7 @@ type PopupWindow(text) =
 let view (u: Event<Update>) =
     Component(fun ctx ->
         let textState = ctx.useState "Initialising launcher..."
-        let progress = ctx.useState 0
+        let progress = ctx.useState 0.
         let indeterminate = ctx.useState true
 
         u.Publish.Subscribe (function
@@ -93,7 +93,7 @@ let view (u: Event<Update>) =
             ProgressBar.create [
                 ProgressBar.dock Dock.Bottom
                 ProgressBar.isIndeterminate indeterminate.Current
-                ProgressBar.value (float progress.Current)
+                ProgressBar.value progress.Current
                 ProgressBar.height 8
                 ProgressBar.cornerRadius (CornerRadius 4)
                 ProgressBar.foreground (SolidColorBrush mainaccent)
