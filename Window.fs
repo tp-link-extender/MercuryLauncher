@@ -13,6 +13,7 @@ open Config
 open Microsoft.FSharp.Control
 open System
 open System.Threading
+open Avalonia.Threading
 
 type Update =
     | Text of string
@@ -66,17 +67,19 @@ type PopupWindow(text) =
         base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
         base.Content <- viewPopup text
 
-let view (u: Event<Update>) =
+let view (u: IEvent<Update>) =
     Component(fun ctx ->
         let textState = ctx.useState "Initialising launcher..."
         let progress = ctx.useState 0.
         let indeterminate = ctx.useState true
 
-        u.Publish.Subscribe (function
-            | Text t -> textState.Set t
-            | Progress p -> progress.Set p
-            | Indeterminate i -> indeterminate.Set i)
-        |> ignore
+        let sub =
+            u.Subscribe (function
+                | Text t -> textState.Set t
+                | Progress p -> progress.Set p
+                | Indeterminate i -> indeterminate.Set i)
+
+        ctx.useEffect (handler = (fun () -> sub.Dispose()), triggers = [ EffectTrigger.AfterInit ])
 
         let textSize = 24
         let padding = 20
@@ -167,16 +170,18 @@ type MainWindow(xfn) =
 
         // set icon (not taskbar icon afaict)
         base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
-        base.Content <- view updateEvent
+        base.Content <- view updateEvent.Publish
+
+        printfn "Subscribing to control events"
 
         controlEvent.Publish.Subscribe (function
             | SuccessMessage text ->
-                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                Dispatcher.UIThread.Post(fun () ->
                     let window = new PopupWindow(text)
                     window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
                     window.Show())
             | ErrorMessage text ->
-                Avalonia.Threading.Dispatcher.UIThread.Post(fun () ->
+                Dispatcher.UIThread.Post(fun () ->
                     let window = new PopupWindow(text)
                     window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
                     window.Show())

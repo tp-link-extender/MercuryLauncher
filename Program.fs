@@ -115,9 +115,14 @@ let downloadClient (client: HttpClient) (u: Event<Update>) v =
                     fun (r: int64) ->
                         let progress = float (r * 100L) / float length
                         printfn $"Download progress: {progress:F2}%%"
-                // MEMORY LEEEEEEEEEEEAK!!!!!!!!!!!!!!!!!!
-                // u.Trigger(Progress progress)
-                // u.Trigger(Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)")
+                        // MEMORY LEEEEEEEEEEEAK!!!!!!!!!!!!!!!!!!
+                        u.Trigger(Progress progress)
+                        u.Trigger(Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)")
+
+                        // check memory usage
+                        let pc = Process.GetCurrentProcess()
+                        let mem = pc.PrivateMemorySize64 / 1024L / 1024L
+                        printfn $"Memory usage: {mem} MB"
                 | None -> fun (_: int64) -> ()
 
             use stream = response.Content.ReadAsStreamAsync().Result
