@@ -67,7 +67,7 @@ type PopupWindow(text) =
         base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
         base.Content <- viewPopup text
 
-let view (u: IEvent<Update>) =
+let view (u: IEvent<Update>) (stupid: Event<IDisposable>) =
     Component(fun ctx ->
         let textState = ctx.useState "Initialising launcher..."
         let progress = ctx.useState 0.
@@ -79,7 +79,7 @@ let view (u: IEvent<Update>) =
                 | Progress p -> progress.Set p
                 | Indeterminate i -> indeterminate.Set i)
 
-        ctx.useEffect (handler = (fun () -> sub.Dispose()), triggers = [ EffectTrigger.AfterInit ])
+        stupid.Trigger sub // y
 
         let textSize = 24
         let padding = 20
@@ -157,6 +157,8 @@ type MainWindow(xfn) =
     let controlEvent = new Event<Control>()
     let updateEvent = new Event<Update>()
 
+    let stupidEvent = new Event<IDisposable>()
+
     do
         base.Title <- $"{name} Launcher"
         base.Width <- int (575 + blurRadius * 2)
@@ -170,7 +172,8 @@ type MainWindow(xfn) =
 
         // set icon (not taskbar icon afaict)
         base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
-        base.Content <- view updateEvent.Publish
+        let comp = view updateEvent.Publish stupidEvent
+        base.Content <- comp
 
         printfn "Subscribing to control events"
 
@@ -190,6 +193,24 @@ type MainWindow(xfn) =
                 Thread.Sleep 100 // give the UI a chance to update before closing
                 Environment.Exit 1)
         |> ignore
+
+        printfn "Subscribing to stupid events"
+
+        let mutable stupidEvents = []
+
+        stupidEvent.Publish.Subscribe(fun d ->
+            printfn $"Received disposable, {List.length stupidEvents + 1}"
+            stupidEvents <- d :: stupidEvents)
+        |> ignore
+
+        comp.DetachedFromLogicalTree.Subscribe(fun _ ->
+            printfn $"Disposing stupid events, {List.length stupidEvents}"
+            stupidEvents |> List.iter (fun d -> d.Dispose())
+            stupidEvents <- []
+            printfn $"Disposed stupid events, {List.length stupidEvents}")
+        |> ignore
+
+    override _.Render(context: DrawingContext) : unit = base.Render(context: DrawingContext)
 
     override _.OnLoaded _ =
         printfn "Initialized MainWindow"
