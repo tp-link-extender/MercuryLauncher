@@ -67,19 +67,27 @@ type PopupWindow(text) =
         base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
         base.Content <- viewPopup text
 
-let view (u: IEvent<Update>) (stupid: Event<IDisposable>) =
+let view (u: IEvent<Update list>) =
     Component(fun ctx ->
-        let textState = ctx.useState "Initialising launcher..."
-        let progress = ctx.useState 0.
-        let indeterminate = ctx.useState true
+        let textState = ctx.useState ("Initialising launcher...", renderOnChange = false)
+        let progress = ctx.useState (0., renderOnChange = false)
+        let indeterminate = ctx.useState (true, renderOnChange = false)
 
-        let sub =
-            u.Subscribe (function
-                | Text t -> textState.Set t
-                | Progress p -> progress.Set p
-                | Indeterminate i -> indeterminate.Set i)
+        let mutable sub: IDisposable = null
 
-        stupid.Trigger sub // y
+        sub <-
+            u.Subscribe(fun updates ->
+                for update in updates do
+                    match update with
+                    | Text t -> textState.Set t
+                    | Progress p -> progress.Set p
+                    | Indeterminate i -> indeterminate.Set i
+
+                if sub <> null then
+                    sub.Dispose()
+                    sub <- null
+
+                ctx.forceRender ())
 
         let textSize = 24
         let padding = 20
@@ -155,9 +163,7 @@ type MainWindow(xfn) =
     inherit HostWindow()
 
     let controlEvent = new Event<Control>()
-    let updateEvent = new Event<Update>()
-
-    let stupidEvent = new Event<IDisposable>()
+    let updateEvent = new Event<Update list>()
 
     do
         base.Title <- $"{name} Launcher"
@@ -172,7 +178,7 @@ type MainWindow(xfn) =
 
         // set icon (not taskbar icon afaict)
         base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
-        let comp = view updateEvent.Publish stupidEvent
+        let comp = view updateEvent.Publish
         base.Content <- comp
 
         printfn "Subscribing to control events"
@@ -192,22 +198,6 @@ type MainWindow(xfn) =
                 printfn "Byebye"
                 Thread.Sleep 100 // give the UI a chance to update before closing
                 Environment.Exit 1)
-        |> ignore
-
-        printfn "Subscribing to stupid events"
-
-        let mutable stupidEvents = []
-
-        stupidEvent.Publish.Subscribe(fun d ->
-            printfn $"Received disposable, {List.length stupidEvents + 1}"
-            stupidEvents <- d :: stupidEvents)
-        |> ignore
-
-        comp.DetachedFromLogicalTree.Subscribe(fun _ ->
-            printfn $"Disposing stupid events, {List.length stupidEvents}"
-            stupidEvents |> List.iter (fun d -> d.Dispose())
-            stupidEvents <- []
-            printfn $"Disposed stupid events, {List.length stupidEvents}")
         |> ignore
 
     override _.Render(context: DrawingContext) : unit = base.Render(context: DrawingContext)

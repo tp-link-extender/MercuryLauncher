@@ -98,12 +98,12 @@ let rec readStream (write: byte[] -> int -> unit) (s: Stream) =
     else
         ()
 
-let downloadClient (client: HttpClient) (u: Event<Update>) v =
+let downloadClient (client: HttpClient) (u: Event<Update list>) v =
     try
         use response =
             client.GetAsync($"{setupUrl}/{v}", HttpCompletionOption.ResponseHeadersRead).Result
 
-        u.Trigger(Indeterminate false)
+        u.Trigger [ Indeterminate false ]
 
         match response.StatusCode with
         | HttpStatusCode.OK ->
@@ -115,9 +115,12 @@ let downloadClient (client: HttpClient) (u: Event<Update>) v =
                     fun (r: int64) ->
                         let progress = float (r * 100L) / float length
                         printfn $"Download progress: {progress:F2}%%"
-                        // MEMORY LEEEEEEEEEEEAK!!!!!!!!!!!!!!!!!!
-                        u.Trigger(Progress progress)
-                        u.Trigger(Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)")
+
+                        // THE MEMORY LEAK IS GONE
+                        u.Trigger [
+                            Progress progress
+                            Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)"
+                        ]
 
                         // check memory usage
                         let pc = Process.GetCurrentProcess()
@@ -443,49 +446,47 @@ let handleError (c: Event<Control>) =
                 Details: {ex.Message}"
         )
 
-let trigger (u: Event<Update>) update d =
-    u.Trigger update
+let trigger (u: Event<Update list>) updates d =
+    u.Trigger updates
     Ok d
 
-let downloadAndInstall (client: HttpClient) (u: Event<Update>) (d, p, v) =
+let downloadAndInstall (client: HttpClient) (u: Event<Update list>) (d, p, v) =
     if d then
         Ok(p, v)
     else
         downloadClient client u v
-        >>= trigger u (Text "Unpacking client...")
+        >>= trigger u [ Indeterminate true; Text "Unpacking client..." ]
         >>= ungzipClient
-        >>= trigger u (Text "Installing client...")
+        >>= trigger u [ Text "Installing client..." ]
         >>= untarClient p v
 
-let launchAndComplete (c: Event<Control>) (u: Event<Update>) ticket (p, v) =
+let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket (p, v) =
     if ticket = "" then
-        u.Trigger(Text $"Clearing old versions...")
+        u.Trigger [ Text $"Clearing old versions..." ]
         let r = clearOldVersions p v ()
 
         if r.IsOk then
-            u.Trigger(Progress 100)
-            u.Trigger(Indeterminate false)
-            u.Trigger(Text "Done!")
+            u.Trigger [ Progress 100; Indeterminate false; Text "Done!" ]
 
             c.Trigger(SuccessMessage $"{name} has been successfully installed and is ready to use!")
 
         // TODO: redirect to site
         r
     else
-        u.Trigger(Text $"Starting {name}...")
+        u.Trigger [ Text $"Starting {name}..." ]
 
         launch ticket (p, v)
-        >>= trigger u (Text $"Finishing up...")
+        >>= trigger u [ Text $"Finishing up..." ]
         >>= checkThatItLaunchedCorrectly
-        >>= trigger u (Text $"Clearing old versions...")
+        >>= trigger u [ Text $"Clearing old versions..." ]
         >>= clearOldVersions p v
 
 let yes x a =
     x ()
     Ok a
 
-let init ticket (c: Event<Control>) (u: Event<Update>) =
-    u.Trigger(Text $"Connecting to {name}...")
+let init ticket (c: Event<Control>) (u: Event<Update list>) =
+    u.Trigger [ Text $"Connecting to {name}..."; Indeterminate false ]
 
     use client = new HttpClient()
 
@@ -495,14 +496,14 @@ let init ticket (c: Event<Control>) (u: Event<Update>) =
         >>= validateVersion
         >>= getPath
         >>= log
-        >>= trigger u (Text "Getting client...")
+        >>= trigger u [ Text "Getting client..." ]
         >>= ensurePath
         >>= log
-        >>= trigger u (Text "Downloading client...")
+        >>= trigger u [ Text "Downloading client..." ]
         >>= downloadAndInstall client u
         >>= log
         >>= yes (fun () -> log "register time" |> ignore)
-        >>= trigger u (Text "Registering protocol...")
+        >>= trigger u [ Text "Registering protocol..." ]
         >>= (if Environment.OSVersion.Platform = PlatformID.Win32NT then
                  registerURIWindows
              else
@@ -512,9 +513,7 @@ let init ticket (c: Event<Control>) (u: Event<Update>) =
 
     match result with
     | Ok _ ->
-        u.Trigger(Progress 100)
-        u.Trigger(Indeterminate false)
-        u.Trigger(Text "Done!")
+        u.Trigger [ Text "Done!"; Indeterminate false; Progress 100 ]
         c.Trigger Shutdown
     | Error e -> handleError c e // this will trigger the shutdown itself
 
