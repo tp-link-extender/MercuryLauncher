@@ -195,30 +195,13 @@ let untarClient p v (tar: MemoryStream) =
         printfn $"Moving to final dir: {path}"
 
         // move the temp directory to the final location
-        if Environment.OSVersion.Platform = PlatformID.Win32NT then
-            // on windows we can just do a normal move
-            if Directory.Exists path then
-                Directory.Delete(path, true)
+        if Directory.Exists path then
+            printfn $"Deleting existing directory: {path}"
+            Directory.Delete(path, true)
 
-            Directory.Move(tempDir, path)
-            Ok(p, v)
-        else
-            // on linux we need sudo permissions to move to /usr/share
-            // match suMove tempDir path with
-            // | Ok(exitCode, error) ->
-            //     printfn $"move exited with code: {exitCode}"
-
-            //     if exitCode <> 0 then
-            //         Error(FailedToInstall(Exception $"move failed: {error}"))
-            //     else
-            //         Ok(p, v)
-            // | Error msg -> Error(FailedToInstall(Exception msg))
-
-            if Directory.Exists path then
-                Directory.Delete(path, true)
-
-            Directory.Move(tempDir, path)
-            Ok(p, v)
+        printfn $"Moving directory from {tempDir} to {path}"
+        Directory.Move(tempDir, path)
+        Ok(p, v)
 
     with e ->
         Error(FailedToInstall e)
@@ -545,28 +528,18 @@ let main args =
     then
         // request elevation
         printfn "Requesting elevation"
+        let filename = Process.GetCurrentProcess().MainModule.FileName
+
+        let envs = [|
+            "DISPLAY=" + Environment.GetEnvironmentVariable "DISPLAY"
+            "XAUTHORITY=" + Environment.GetEnvironmentVariable "XAUTHORITY"
+        |]
 
         let psi =
             ProcessStartInfo(
                 FileName = "pkexec",
-                Arguments = $"""{Process.GetCurrentProcess().MainModule.FileName} {String.Join(" ", args)}"""
-            // UseShellExecute = false,
-            // RedirectStandardOutput = true,
-            // RedirectStandardError = true
+                Arguments = $"""env {String.Join(" ", envs)} bash -c "{filename} {String.Join(" ", args)}" """
             )
-
-        // if not (String.IsNullOrEmpty display) then
-        //     psi.Environment.["DISPLAY"] <- display
-
-        // if not (String.IsNullOrEmpty xauthority) then
-        //     psi.Environment.["XAUTHORITY"] <- xauthority
-
-        // copy all environment variables
-        for kvp in System.Environment.GetEnvironmentVariables() do
-            let de = kvp :?> DictionaryEntry
-            let key = de.Key :?> string
-            let value = de.Value :?> string
-            psi.Environment.[key] <- value
 
         let proc = Process.Start psi
         proc.WaitForExit()
