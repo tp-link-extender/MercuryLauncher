@@ -1,5 +1,5 @@
 // Mercury Setup Deployer 4
-// The only setup deployer that isn't overengineered (this aged questionably)
+// The only setup deployer that isn't overengineered (again!)
 
 package main
 
@@ -7,21 +7,18 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
+	"crypto/sha3"
+	"encoding/base32"
 	"fmt"
+	"io"
 	"os"
-	"sync"
 	"time"
-
-	"github.com/ipfs/boxo/files"
-	"github.com/ipfs/kubo/client/rpc"
-	"github.com/ipfs/go-cid"
 )
 
 const (
-	staging  = "./staging"
-	versions = "./versions.txt"
-	name     = "Mercury"
+	staging = "./staging"
+	output  = "./setup"
+	name    = "Mercury"
 )
 
 var launchers = map[string]string{
@@ -29,53 +26,42 @@ var launchers = map[string]string{
 	name + "Launcher_linux-x64":   "./launchers/" + name + "Launcher",
 }
 
-func compressStagingDir(o *bytes.Buffer) (err error) {
+var encoding = base32.NewEncoding("0123456789abcdefghijklmnopqrstuv").WithPadding(base32.NoPadding)
+
+func compressStagingDir(o *bytes.Buffer) (id string, err error) {
 	gz, _ := gzip.NewWriterLevel(o, gzip.BestCompression)
 	defer gz.Close()
 
 	w := tar.NewWriter(gz)
 	defer w.Close()
 
-	return w.AddFS(os.DirFS(staging))
+	if err = w.AddFS(os.DirFS(staging)); err != nil {
+		return
+	}
+
+	hash := sha3.SumSHAKE256(o.Bytes(), 8)
+	enchash := encoding.EncodeToString(hash[:])
+
+	return enchash, nil
 }
 
-type fileToUpload struct {
-	name string
-	file files.File
-	cid  cid.Cid
+type fileHash struct {
+	name, enchash string
 }
 
-func uploadAndPin(api *rpc.HttpApi, ftu *fileToUpload, wg *sync.WaitGroup, lastErr *error) {
-	defer wg.Done()
-	defer ftu.file.Close()
-
-	ctx := context.Background()
-
-	cidFile, err := api.Unixfs().Add(ctx, ftu.file)
+func writeStagingDir(hash string, o *bytes.Buffer) (err error) {
+	// write to output file
+	outputFile, err := os.Create(output + "/" + hash)
 	if err != nil {
-		*lastErr = fmt.Errorf("add file to local IPFS node: %w", err)
-		return
+		return fmt.Errorf("error creating output file: %w", err)
+	}
+	defer outputFile.Close()
+
+	if _, err = io.Copy(outputFile, o); err != nil {
+		return fmt.Errorf("error writing to output file: %w", err)
 	}
 
-	rcid := cidFile.RootCid()
-	cid1 := cid.NewCidV1(rcid.Type(), rcid.Hash())
-	fmt.Println(cid1, "added to IPFS")
-
-	// pin CID
-	if err := api.Pin().Add(ctx, cidFile); err != nil {
-		*lastErr = fmt.Errorf("pin file on local IPFS node: %w", err)
-		return
-	}
-	fmt.Println(cid1, "pinned on local node")
-
-	// announce provision of files (this takes a while!)
-	if err := api.Routing().Provide(ctx, cidFile); err != nil {
-		*lastErr = fmt.Errorf("provide file on network: %w", err)
-		return
-	}
-	fmt.Println(cid1, "provided on network")
-
-	ftu.cid = cid1
+	return
 }
 
 func main() {
@@ -104,75 +90,81 @@ func main() {
 
 	fmt.Println("All launchers are present.")
 
+	// create output directory if it doesn't exist
+	if _, err := os.Stat(output); os.IsNotExist(err) {
+		if err = os.Mkdir(output, 0o755); err != nil {
+			fmt.Println("Error creating output directory:", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Println("Output directory is ready.")
+
+	fmt.Println("Compressing staging directory...")
 	start := time.Now()
 
 	o := &bytes.Buffer{}
-	if err := compressStagingDir(o); err != nil {
+	id, err := compressStagingDir(o)
+	if err != nil {
 		fmt.Println("Error compressing staging directory:", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Staging directory compressed in %s\n", time.Since(start))
 
+	// gzip staging files to output directory
 	start = time.Now()
 
-	// Create versions file
-	versionsFile, err := os.Create(versions)
-	if err != nil {
-		fmt.Println("Error creating versions file:", err)
-		os.Exit(1)
-	}
-	defer versionsFile.Close()
-
-	// get local IPFS node API
-	api, err := rpc.NewLocalApi()
-	if err != nil {
-		fmt.Println("Error connecting to local IPFS node:", err)
+	if err := writeStagingDir(id, o); err != nil {
+		fmt.Println("Error compressing staging files:", err)
 		os.Exit(1)
 	}
 
-	// Upload compressed setup to IPFS
-	filesToUpload := []*fileToUpload{
-		{
-			name: "setup",
-			file: files.NewReaderFile(o),
-		},
+	fmt.Printf("Staging files written to output directory in %s\n", time.Since(start))
+
+	fileHashes := []fileHash{
+		{name: "staging", enchash: id},
 	}
 
-	// Upload launchers to IPFS
 	for name, path := range launchers {
-		launcherFile, err := os.Open(path)
+		launcherData, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Printf("Error opening launcher file for %s: %v\n", name, err)
+			fmt.Printf("Error reading launcher %s: %v\n", name, err)
 			os.Exit(1)
 		}
-		defer launcherFile.Close()
 
-		filesToUpload = append(filesToUpload, &fileToUpload{
-			name: name,
-			file: files.NewReaderFile(launcherFile),
-		})
+		// copy launcher to output directory
+		outputLauncherFile, err := os.Create(output + "/" + name)
+		if err != nil {
+			fmt.Printf("Error creating output launcher file %s: %v\n", name, err)
+			os.Exit(1)
+		}
+		if _, err := outputLauncherFile.Write(launcherData); err != nil {
+			fmt.Printf("Error writing to output launcher file %s: %v\n", name, err)
+			os.Exit(1)
+		}
+
+		launcherHash := sha3.SumSHAKE256(launcherData, 8)
+		enchash := encoding.EncodeToString(launcherHash[:])
+
+		fileHashes = append(fileHashes, fileHash{name: name, enchash: enchash})
 	}
 
-	var wg sync.WaitGroup
-	var lastErr error
-
-	wg.Add(len(filesToUpload))
-	for _, ftu := range filesToUpload {
-		go uploadAndPin(api, ftu, &wg, &lastErr)
-	}
-	wg.Wait()
-
-	if lastErr != nil {
-		fmt.Println("Error uploading and pinning files:", lastErr)
+	// create or modify version.txt in output directory
+	versionFile, err := os.Create(output + "/version")
+	if err != nil {
+		fmt.Println("Error creating version file:", err)
 		os.Exit(1)
 	}
+	defer versionFile.Close()
 
-	for _, ftu := range filesToUpload {
-		fmt.Fprintf(versionsFile, "%s %s\n", ftu.cid, ftu.name)
+	for _, file := range fileHashes {
+		if _, err := fmt.Fprintf(versionFile, "%s %s\n", file.enchash, file.name); err != nil {
+			fmt.Println("Error writing to version file:", err)
+			os.Exit(1)
+		}
 	}
 
-	fmt.Printf("All files uploaded and pinned in %s\n", time.Since(start))
-
+	fmt.Println("version file created with ID", id)
 	fmt.Println("Setup deployer completed successfully.")
 }
