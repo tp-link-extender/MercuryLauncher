@@ -135,7 +135,12 @@ func main() {
 			fmt.Printf("Error writing to output launcher file %s: %v\n", name, err)
 			os.Exit(1)
 		}
-		outputLauncherFile.Close()
+		if err := outputLauncherFile.Close(); err != nil {
+			fmt.Printf("Error closing output launcher file %s: %v\n", name, err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Launcher %s copied to output directory.\n", name)
 	}
 
 	// create or modify version.txt in output directory
@@ -151,6 +156,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("version file created with ID", id)
+	fmt.Println("Version file created with ID", id)
 	fmt.Println("Setup deployer completed successfully.")
 }
