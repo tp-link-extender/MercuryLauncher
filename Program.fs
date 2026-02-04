@@ -156,30 +156,6 @@ let ungzipClient (data: byte array) =
     with e ->
         Error(FailedToUnpack e)
 
-let suMove (src: string) (dst: string) =
-    let cmd = $"mkdir -p \"{dst}\" && mv -f \"{src}/*\" \"{dst}\""
-    let cmd2 = cmd.Replace("\"", "\\\"")
-
-    let psi =
-        ProcessStartInfo(
-            FileName = "pkexec",
-            Arguments = $"sh -c \"{cmd2}\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        )
-
-    let proc = Process.Start psi
-
-    if proc = null then
-        Error "Failed to start move process"
-    else
-        proc.WaitForExit()
-        let exitCode = proc.ExitCode
-        let error = proc.StandardError.ReadToEnd()
-        Ok(exitCode, error)
-
 let untarClient p v (tar: MemoryStream) =
     let path = versionPath p v
 
@@ -192,16 +168,43 @@ let untarClient p v (tar: MemoryStream) =
         // extract the tar file
         Formats.Tar.TarFile.ExtractToDirectory(tar, tempDir, true)
 
-        printfn $"Moving to final dir: {path}"
+        printfn $"Moving to final dir {path}"
 
         // move the temp directory to the final location
         if Directory.Exists path then
             printfn $"Deleting existing directory: {path}"
             Directory.Delete(path, true)
+        
+        if not (Directory.Exists tempDir) then
+            printfn $"Temp directory does not exist: {tempDir}"
+            Error(FailedToInstall (Exception "Temporary extraction directory does not exist"))
+        else
+            printfn $"Moving directory from {tempDir}"
+            
+            // copy directory contents
+            Directory.CreateDirectory path |> ignore
+            for p in Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories) do
+                let relativePath = p.Substring(tempDir.Length).TrimStart Path.DirectorySeparatorChar
+                let destPath = Path.Combine(path, relativePath)
+            
+                // get what parent of the dest path would be
+                let destDir = Path.GetDirectoryName destPath
 
-        printfn $"Moving directory from {tempDir} to {path}"
-        Directory.Move(tempDir, path)
-        Ok(p, v)
+                printfn $"Copying file to {destPath}, in dir {destDir}"
+
+                if not (Directory.Exists destDir) then
+                    printfn $"Creating directory {destDir}"
+                    Directory.CreateDirectory destDir |> ignore
+
+
+                File.Copy(p, destPath)
+
+            // delete the temp directory
+            Directory.Delete(tempDir, true)
+
+            printfn $"Client installed to {path}"
+
+            Ok(p, v)
 
     with e ->
         Error(FailedToInstall e)
