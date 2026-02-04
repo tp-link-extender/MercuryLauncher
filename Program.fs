@@ -11,6 +11,7 @@ open System.Net.Http
 open System
 open Window
 open Microsoft.Win32
+open System.Collections
 
 type ErrorType =
     | VersionTooLong
@@ -203,15 +204,22 @@ let untarClient p v (tar: MemoryStream) =
             Ok(p, v)
         else
             // on linux we need sudo permissions to move to /usr/share
-            match suMove tempDir path with
-            | Ok(exitCode, error) ->
-                printfn $"move exited with code: {exitCode}"
+            // match suMove tempDir path with
+            // | Ok(exitCode, error) ->
+            //     printfn $"move exited with code: {exitCode}"
 
-                if exitCode <> 0 then
-                    Error(FailedToInstall(Exception $"move failed: {error}"))
-                else
-                    Ok(p, v)
-            | Error msg -> Error(FailedToInstall(Exception msg))
+            //     if exitCode <> 0 then
+            //         Error(FailedToInstall(Exception $"move failed: {error}"))
+            //     else
+            //         Ok(p, v)
+            // | Error msg -> Error(FailedToInstall(Exception msg))
+
+            if Directory.Exists path then
+                Directory.Delete(path, true)
+
+            Directory.Move(tempDir, path)
+            Ok(p, v)
+
     with e ->
         Error(FailedToInstall e)
 
@@ -530,19 +538,58 @@ let startApp xfn =
 
 [<EntryPoint; STAThread>]
 let main args =
-    let ticket =
-        if args = [||] then
-            ""
-        else
-            let mainArg = args[0]
+    // check if on linux
+    if
+        Environment.OSVersion.Platform <> PlatformID.Win32NT
+        && not Environment.IsPrivilegedProcess
+    then
+        // request elevation
+        printfn "Requesting elevation"
 
-            if not (mainArg.StartsWith launcherScheme) then
-                // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
-                // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
+        let psi =
+            ProcessStartInfo(
+                FileName = "pkexec",
+                Arguments = $"""{Process.GetCurrentProcess().MainModule.FileName} {String.Join(" ", args)}"""
+            // UseShellExecute = false,
+            // RedirectStandardOutput = true,
+            // RedirectStandardError = true
+            )
 
-                Environment.Exit 1
+        // if not (String.IsNullOrEmpty display) then
+        //     psi.Environment.["DISPLAY"] <- display
 
-            mainArg.Substring(launcherScheme.Length + 1)
+        // if not (String.IsNullOrEmpty xauthority) then
+        //     psi.Environment.["XAUTHORITY"] <- xauthority
 
-    // start app as a thread
-    startApp (init ticket)
+        // copy all environment variables
+        for kvp in System.Environment.GetEnvironmentVariables() do
+            let de = kvp :?> DictionaryEntry
+            let key = de.Key :?> string
+            let value = de.Value :?> string
+            psi.Environment.[key] <- value
+
+        let proc = Process.Start psi
+        proc.WaitForExit()
+
+        printfn "Elevated process exited with code: %d" proc.ExitCode
+
+        proc.ExitCode
+    else
+        printfn "Starting application"
+
+        let ticket =
+            if args = [||] then
+                ""
+            else
+                let mainArg = args[0]
+
+                if not (mainArg.StartsWith launcherScheme) then
+                    // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
+                    // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
+
+                    Environment.Exit 1
+
+                mainArg.Substring(launcherScheme.Length + 1)
+
+        // start app as a thread
+        startApp (init ticket)
