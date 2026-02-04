@@ -45,10 +45,6 @@ func compressStagingDir(o *bytes.Buffer) (id string, err error) {
 	return enchash, nil
 }
 
-type fileHash struct {
-	name, enchash string
-}
-
 func writeStagingDir(hash string, o *bytes.Buffer) (err error) {
 	// write to output file
 	outputFile, err := os.Create(output + "/" + hash)
@@ -122,10 +118,6 @@ func main() {
 
 	fmt.Printf("Staging files written to output directory in %s\n", time.Since(start))
 
-	fileHashes := []fileHash{
-		{name: "staging", enchash: id},
-	}
-
 	for name, path := range launchers {
 		launcherData, err := os.ReadFile(path)
 		if err != nil {
@@ -143,11 +135,7 @@ func main() {
 			fmt.Printf("Error writing to output launcher file %s: %v\n", name, err)
 			os.Exit(1)
 		}
-
-		launcherHash := sha3.SumSHAKE256(launcherData, 8)
-		enchash := encoding.EncodeToString(launcherHash[:])
-
-		fileHashes = append(fileHashes, fileHash{name: name, enchash: enchash})
+		outputLauncherFile.Close()
 	}
 
 	// create or modify version.txt in output directory
@@ -158,11 +146,9 @@ func main() {
 	}
 	defer versionFile.Close()
 
-	for _, file := range fileHashes {
-		if _, err := fmt.Fprintf(versionFile, "%s %s\n", file.enchash, file.name); err != nil {
-			fmt.Println("Error writing to version file:", err)
-			os.Exit(1)
-		}
+	if _, err := versionFile.WriteString(id); err != nil {
+		fmt.Println("Error writing to version file:", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("version file created with ID", id)
