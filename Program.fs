@@ -66,9 +66,9 @@ let versionPath s v =
 
 let launcherPath s v =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
-        Path.Combine(versionPath s v, $"{name}Launcher.exe")
+        Path.Combine(versionPath s v, $"{name}Launcher_win-x64.exe")
     else
-        Path.Combine(versionPath s v, $"{name}Launcher")
+        Path.Combine(versionPath s v, $"{name}Launcher_linux-x64")
 
 let playerPath s v =
     Path.Combine(versionPath s v, $"{name}PlayerBeta.exe")
@@ -114,19 +114,11 @@ let downloadClient (client: HttpClient) (u: Event<Update list>) v =
                 match Option.ofNullable contentLength with
                 | Some length ->
                     fun (r: int64) ->
-                        let progress = float (r * 100L) / float length
-                        printfn $"Download progress: {progress:F2}%%"
-
                         // THE MEMORY LEAK IS GONE
                         u.Trigger [
-                            Progress progress
+                            Progress(float (r * 100L) / float length)
                             Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)"
                         ]
-
-                        // check memory usage
-                        let pc = Process.GetCurrentProcess()
-                        let mem = pc.PrivateMemorySize64 / 1024L / 1024L
-                        printfn $"Memory usage: {mem} MB"
                 | None -> fun (_: int64) -> ()
 
             use stream = response.Content.ReadAsStreamAsync().Result
@@ -174,19 +166,20 @@ let untarClient p v (tar: MemoryStream) =
         if Directory.Exists path then
             printfn $"Deleting existing directory: {path}"
             Directory.Delete(path, true)
-        
+
         if not (Directory.Exists tempDir) then
             printfn $"Temp directory does not exist: {tempDir}"
-            Error(FailedToInstall (Exception "Temporary extraction directory does not exist"))
+            Error(FailedToInstall(Exception "Temporary extraction directory does not exist"))
         else
             printfn $"Moving directory from {tempDir}"
-            
+
             // copy directory contents
             Directory.CreateDirectory path |> ignore
+
             for p in Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories) do
                 let relativePath = p.Substring(tempDir.Length).TrimStart Path.DirectorySeparatorChar
                 let destPath = Path.Combine(path, relativePath)
-            
+
                 // get what parent of the dest path would be
                 let destDir = Path.GetDirectoryName destPath
 
