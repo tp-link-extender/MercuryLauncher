@@ -11,17 +11,16 @@ open System.Net.Http
 open System
 open Window
 open Microsoft.Win32
-open System.Collections
 
 type ErrorType =
     | VersionTooLong
     | VersionMissing
     | VersionFailedToGet of HttpStatusCode
-    | ClientFailedToGet of HttpStatusCode
+    | FailedToGet of string * HttpStatusCode
+    | FailedToDownload of string * exn
+    | FailedToInstall of string * exn
     | FailedToConnect of exn
-    | FailedToDownload of exn
     | FailedToUnpack of exn
-    | FailedToInstall of exn
     | ClientNotFound
     | FailedToRemoveOldVersions of int
     | FailedToLaunch of exn
@@ -64,11 +63,14 @@ let versionsPath s = Path.Combine(s, "Versions")
 let versionPath s v =
     Path.Combine(versionsPath s, $"version-%s{v}")
 
-let launcherPath s v =
+let launcherFilename () =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
-        Path.Combine(versionPath s v, $"{name}Launcher_win-x64.exe")
+        $"{name}Launcher_win-x64.exe"
     else
-        Path.Combine(versionPath s v, $"{name}Launcher_linux-x64")
+        $"{name}Launcher_linux-x64"
+
+let launcherPath s v =
+    Path.Combine(versionPath s v, launcherFilename ())
 
 let playerPath s v =
     Path.Combine(versionPath s v, $"{name}PlayerBeta.exe")
@@ -99,10 +101,10 @@ let rec readStream (write: byte[] -> int -> unit) (s: Stream) =
     else
         ()
 
-let downloadClient (client: HttpClient) (u: Event<Update list>) v =
+let download (client: HttpClient) (u: Event<Update list>) thing path =
     try
         use response =
-            client.GetAsync($"{setupUrl}/{v}", HttpCompletionOption.ResponseHeadersRead).Result
+            client.GetAsync($"{setupUrl}/{path}", HttpCompletionOption.ResponseHeadersRead).Result
 
         u.Trigger [ Indeterminate false ]
 
@@ -117,7 +119,7 @@ let downloadClient (client: HttpClient) (u: Event<Update list>) v =
                         // THE MEMORY LEAK IS GONE
                         u.Trigger [
                             Progress(float (r * 100L) / float length)
-                            Text $"Downloading client... ({r / 1000L}k / {length / 1000L}k)"
+                            Text $"Downloading {thing}... ({r / 1000L}k / {length / 1000L}k)"
                         ]
                 | None -> fun (_: int64) -> ()
 
@@ -131,10 +133,10 @@ let downloadClient (client: HttpClient) (u: Event<Update list>) v =
             readStream write stream
 
             Ok(ms.ToArray())
-        | code -> Error(ClientFailedToGet code)
+        | code -> Error(FailedToGet(thing, code))
     with
-    | :? AggregateException as e -> Error(FailedToDownload e.InnerException)
-    | e -> Error(FailedToDownload e)
+    | :? AggregateException as e -> Error(FailedToDownload(thing, e.InnerException))
+    | e -> Error(FailedToDownload(thing, e))
 
 let ungzipClient (data: byte array) =
     // we have the data, we'd like to un-gzip it
@@ -164,12 +166,10 @@ let untarClient p v (tar: MemoryStream) =
 
         // move the temp directory to the final location
         if Directory.Exists path then
-            printfn $"Deleting existing directory: {path}"
             Directory.Delete(path, true)
 
         if not (Directory.Exists tempDir) then
-            printfn $"Temp directory does not exist: {tempDir}"
-            Error(FailedToInstall(Exception "Temporary extraction directory does not exist"))
+            Error(FailedToInstall("client", Exception "Temporary extraction directory does not exist"))
         else
             printfn $"Moving directory from {tempDir}"
 
@@ -183,12 +183,8 @@ let untarClient p v (tar: MemoryStream) =
                 // get what parent of the dest path would be
                 let destDir = Path.GetDirectoryName destPath
 
-                printfn $"Copying file to {destPath}, in dir {destDir}"
-
                 if not (Directory.Exists destDir) then
-                    printfn $"Creating directory {destDir}"
                     Directory.CreateDirectory destDir |> ignore
-
 
                 File.Copy(p, destPath)
 
@@ -200,7 +196,7 @@ let untarClient p v (tar: MemoryStream) =
             Ok(p, v)
 
     with e ->
-        Error(FailedToInstall e)
+        Error(FailedToInstall("client", e))
 
 let ensurePath (p, v) = Ok(File.Exists(playerPath p v), p, v)
 
@@ -330,7 +326,9 @@ let clearOldVersions (p: string) v () =
     if Directory.Exists path then
         let failedVersions =
             Directory.GetDirectories path
-            |> Array.filter (fun d -> d <> versionPath p v)
+            |> Array.filter (fun d ->
+                printfn "comparing %s to %s" d (versionPath p v)
+                d <> versionPath p v)
             |> Array.map (fun d ->
                 try
                     Directory.Delete(d, true)
@@ -367,11 +365,27 @@ let handleError (c: Event<Control>) =
                 $"There was an error when trying to get the version from {name}.\n\
                 The server returned a {code} status code."
         )
-    | ClientFailedToGet code ->
+    | FailedToGet(thing, code) ->
         c.Trigger(
             ErrorMessage
-                $"There was an error when trying to download the {name} client.\n\
+                $"There was an error when trying to download the {name} {thing}.\n\
                 The server returned a {code} status code."
+        )
+    | FailedToDownload(thing, ex) ->
+        c.Trigger(
+            ErrorMessage
+                $"Failed to download the {name} {thing}.\n\
+                Please check your internet connection and try again.\n\
+                \n\
+                Details: {ex.Message}"
+        )
+    | FailedToInstall(thing, ex) ->
+        c.Trigger(
+            ErrorMessage
+                $"Failed to install the {name} {thing}.\n\
+                Please make sure write permissions are given to the installation directory, and there are no existing files with the same name.\n\
+                \n\
+                Details: {ex.Message}"
         )
     | FailedToConnect ex ->
         c.Trigger(
@@ -381,26 +395,10 @@ let handleError (c: Event<Control>) =
                 \n\
                 Details: {ex.Message}"
         )
-    | FailedToDownload ex ->
-        c.Trigger(
-            ErrorMessage
-                $"Failed to download the {name} client.\n\
-                Please check your internet connection and try again.\n\
-                \n\
-                Details: {ex.Message}"
-        )
     | FailedToUnpack ex ->
         c.Trigger(
             ErrorMessage
                 $"Failed to unpack the {name} client.\n\
-                \n\
-                Details: {ex.Message}"
-        )
-    | FailedToInstall ex ->
-        c.Trigger(
-            ErrorMessage
-                $"Failed to install the {name} client.\n\
-                Please make sure write permissions are given to the installation directory, and there are no existing files with the same name.\n\
                 \n\
                 Details: {ex.Message}"
         )
@@ -437,15 +435,34 @@ let trigger (u: Event<Update list>) updates d =
     u.Trigger updates
     Ok d
 
-let downloadAndInstall (client: HttpClient) (u: Event<Update list>) (d, p, v) =
+let saveLauncher (p, v) (data: byte array) =
+    let path = launcherPath p v
+
+    try
+        File.WriteAllBytes(path, data)
+        Ok(p, v)
+    with e ->
+        Error(FailedToInstall("launcher", e))
+
+let yes x a =
+    x ()
+    Ok a
+
+let downloadAndInstallClient (client: HttpClient) (u: Event<Update list>) (d, p, v) =
     if d then
         Ok(p, v)
     else
-        downloadClient client u v
+        download client u "client" v
         >>= trigger u [ Indeterminate true; Text "Unpacking client..." ]
         >>= ungzipClient
         >>= trigger u [ Text "Installing client..." ]
         >>= untarClient p v
+
+let downloadAndInstallLauncher (client: HttpClient) (u: Event<Update list>) (p, v) =
+
+    download client u "launcher" (launcherFilename ())
+    >>= trigger u [ Text "Installing launcher..." ]
+    >>= saveLauncher (p, v)
 
 let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket (p, v) =
     if ticket = "" then
@@ -468,10 +485,6 @@ let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket (p, v) 
         >>= trigger u [ Text $"Clearing old versions..." ]
         >>= clearOldVersions p v
 
-let yes x a =
-    x ()
-    Ok a
-
 let init ticket (c: Event<Control>) (u: Event<Update list>) =
     u.Trigger [ Text $"Connecting to {name}..."; Indeterminate false ]
 
@@ -487,7 +500,10 @@ let init ticket (c: Event<Control>) (u: Event<Update list>) =
         >>= ensurePath
         >>= log
         >>= trigger u [ Text "Downloading client..." ]
-        >>= downloadAndInstall client u
+        >>= downloadAndInstallClient client u
+        >>= log
+        >>= trigger u [ Text "Downloading launcher..." ]
+        >>= downloadAndInstallLauncher client u
         >>= log
         >>= yes (fun () -> log "register time" |> ignore)
         >>= trigger u [ Text "Registering protocol..." ]
