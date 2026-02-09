@@ -198,7 +198,7 @@ let untarClient p v (tar: MemoryStream) =
     with e ->
         Error(FailedToInstall("client", e))
 
-let ensurePath (p, v) = Ok(File.Exists(playerPath p v), p, v)
+let ensurePath fn (p, v) = Ok(File.Exists(fn p v), p, v)
 
 let startProcess (exePath: string) (args: string array) = Process.Start(exePath, args)
 
@@ -254,14 +254,31 @@ let addToMimeapps (dir: string) (filename: string) =
             x-scheme-handler/{launcherScheme}={filename};\n"
         )
 
-let registerURILinux (p, v) =
-    let applicationsDir = "/usr/share/applications"
+let chmodExec execPath =
+    // chmod the exec
+    let psi =
+        ProcessStartInfo(
+            FileName = "chmod",
+            Arguments = $"+x \"{execPath}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        )
 
-    Directory.CreateDirectory applicationsDir |> ignore
+    try
+        use proc = Process.Start psi
+        proc.WaitForExit()
 
-    printfn $"Applications dir: {applicationsDir}"
-    let execPath = launcherPath p v
+        if proc.ExitCode <> 0 then
+            let err = proc.StandardError.ReadToEnd()
+            Error(FailedToRegister(Exception $"chmod failed: {err}"))
+        else
+            Ok()
+    with e ->
+        Error(FailedToRegister e)
 
+let addDesktopEntry execPath applicationsDir p v =
     let desktopContents =
         $"[Desktop Entry]\n\
             Name={name} Launcher\n\
@@ -316,6 +333,21 @@ let registerURILinux (p, v) =
             Ok(p, v)
     with e ->
         Error(FailedToRegister e)
+
+
+let registerURILinux (p, v) =
+    let applicationsDir = "/usr/share/applications"
+
+    Directory.CreateDirectory applicationsDir |> ignore
+
+    printfn $"Applications dir: {applicationsDir}"
+    let execPath = launcherPath p v
+
+    // chmod the exec
+    if chmodExec execPath |> Result.isError then
+        Error(FailedToRegister(Exception "Failed to set executable permissions on the launcher."))
+    else
+        addDesktopEntry execPath applicationsDir p v
 
 let checkThatItLaunchedCorrectly (p: Process) =
     if p.HasExited then Error ClientNotFound else Ok()
@@ -458,11 +490,13 @@ let downloadAndInstallClient (client: HttpClient) (u: Event<Update list>) (d, p,
         >>= trigger u [ Text "Installing client..." ]
         >>= untarClient p v
 
-let downloadAndInstallLauncher (client: HttpClient) (u: Event<Update list>) (p, v) =
-
-    download client u "launcher" (launcherFilename ())
-    >>= trigger u [ Text "Installing launcher..." ]
-    >>= saveLauncher (p, v)
+let downloadAndInstallLauncher (client: HttpClient) (u: Event<Update list>) (d, p, v) =
+    if d then
+        Ok(p, v)
+    else
+        download client u "launcher" (launcherFilename ())
+        >>= trigger u [ Text "Installing launcher..." ]
+        >>= saveLauncher (p, v)
 
 let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket (p, v) =
     if ticket = "" then
@@ -497,10 +531,11 @@ let init ticket (c: Event<Control>) (u: Event<Update list>) =
         >>= getPath
         >>= log
         >>= trigger u [ Text "Getting client..." ]
-        >>= ensurePath
+        >>= ensurePath playerPath
         >>= log
         >>= trigger u [ Text "Downloading client..." ]
         >>= downloadAndInstallClient client u
+        >>= ensurePath launcherPath
         >>= log
         >>= trigger u [ Text "Downloading launcher..." ]
         >>= downloadAndInstallLauncher client u
