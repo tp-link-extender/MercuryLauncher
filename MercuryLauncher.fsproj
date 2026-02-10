@@ -1,20 +1,34 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
-		<PublishSingleFile>true</PublishSingleFile>
 		<DebugType>None</DebugType>
 
-		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
-		<TargetFramework>net9.0-windows</TargetFramework>
+		<!-- bundle everything into a single executable -->
+		<PublishSingleFile>true</PublishSingleFile>
+		<IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+		<EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+		<!-- For a truly single native binary you need Native AOT (may not be compatible with Avalonia):
+			 <PublishAot>true</PublishAot>
+		-->
+
+		<TargetFramework>net10.0</TargetFramework>
 		<RootNamespace>MercuryLauncher</RootNamespace>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
-		<UseWpf>true</UseWpf>
+		<PublishTrimmed>true</PublishTrimmed>
+		<TrimmerRemoveSymbols>true</TrimmerRemoveSymbols>
+		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
 	</PropertyGroup>
 	<ItemGroup>
-		<EmbeddedResource Include="icon.png" />
+		<EmbeddedResource Include="iconlight.png" />
+		<AvaloniaResource Include="Assets\Fonts\*" />
 		<Compile Include="Config.fs" />
 		<Compile Include="Window.fs" />
 		<Compile Include="Program.fs" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Avalonia.Desktop" Version="11.3.11" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.11" />
+		<PackageReference Include="Avalonia.FuncUI" Version="1.5.2" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.11" />
 	</ItemGroup>
 </Project>

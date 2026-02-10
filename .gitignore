@@ -1,4 +1,7 @@
 /bin
 /obj
-/Deployer/setup
+/Deployer/versions.txt
 /Deployer/staging*
+/Deployer/setup
+/Deployer/launchers
+/out

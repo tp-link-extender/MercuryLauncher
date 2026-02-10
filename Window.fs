@@ -1,132 +1,221 @@
 module Window
 
-open System.Windows
-open System.Windows.Controls
-open System.Windows.Media
+open Avalonia
+open Avalonia.Controls
+open Avalonia.Controls.ApplicationLifetimes
+open Avalonia.FuncUI
+open Avalonia.FuncUI.DSL
+open Avalonia.FuncUI.Hosts
+open Avalonia.Layout
+open Avalonia.Media
+open Avalonia.Themes.Fluent
 open Config
+open Microsoft.FSharp.Control
+open System
+open System.Threading
+open Avalonia.Threading
 
-// Really starting to get the hang of this F# thing
 type Update =
     | Text of string
     | Progress of float
     | Indeterminate of bool
+
+type Control =
     | SuccessMessage of string
     | ErrorMessage of string
     | Shutdown
 
-let messageBoxReturn = Event<MessageBoxResult>()
+let width = 500
+let height = 320
+let blurRadius = 20
 
-let SetPosition element x y =
-    Canvas.SetLeft(element, x)
-    Canvas.SetTop(element, y)
+let mainaccent = Color.FromRgb(119uy, 51uy, 255uy) // Mercury hsl(260 100 60)
+let darker = Color.FromRgb(9uy, 8uy, 10uy)
+let background = Color.FromRgb(15uy, 14uy, 17uy)
+let accent = Color.FromRgb(29uy, 28uy, 31uy)
 
-let windowPos s w = (s - w) / 2.
+let viewPopup text =
+    Component(fun _ ->
+        let padding = 10
 
-let createIcon size =
-    Image(Width = size, Height = size, Source = imgIcon)
+        Border.create [
+            Border.margin (Thickness(padding, padding, padding, int (padding * 2)))
+            Border.child (
+                TextBlock.create [
+                    TextBlock.text text
+                    TextBlock.fontSize 14
+                    TextBlock.fontWeight FontWeight.SemiBold
+                    TextBlock.foreground (SolidColorBrush Colors.White)
+                    TextBlock.textAlignment TextAlignment.Left
+                    TextBlock.horizontalAlignment HorizontalAlignment.Left
+                    TextBlock.textWrapping TextWrapping.Wrap
+                ]
+            )
+        ])
 
-let ui2016 () =
-    let width, height = 500., 320.
-    let icon = createIcon 128
+type PopupWindow(text) =
+    inherit HostWindow()
 
-    let text =
-        TextBlock(
-            Width = 250,
-            Height = 24,
-            FontSize = 15,
-            FontFamily = FontFamily "Tahoma",
-            Text = "Initialising launcher...",
-            TextAlignment = TextAlignment.Center
-        )
+    do
+        base.Title <- $"{name} Launcher"
+        base.Width <- 450
+        base.SizeToContent <- SizeToContent.Height
+        base.CornerRadius <- CornerRadius 15
+        base.Background <- SolidColorBrush darker
 
-    let progress = ProgressBar(Width = 450, Height = 20, IsIndeterminate = true)
+        // set icon (not taskbar icon afaict)
+        base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
+        base.Content <- viewPopup text
 
-    SetPosition icon ((width - icon.Width) / 2.) 45
-    SetPosition text ((width - text.Width) / 2.) 210
-    SetPosition progress ((width - progress.Width) / 2.) 250
+let view (u: IEvent<Update list>) =
+    Component(fun ctx ->
+        let textState = ctx.useState ("Initialising launcher...", renderOnChange = false)
+        let progress = ctx.useState (0., renderOnChange = false)
+        let indeterminate = ctx.useState (true, renderOnChange = false)
 
-    let canvas = Canvas()
+        let mutable sub: IDisposable = null
 
-    ([| icon; text; progress |]: UIElement [])
-    |> Array.iter (canvas.Children.Add >> ignore)
+        sub <-
+            u.Subscribe(fun updates ->
+                for update in updates do
+                    match update with
+                    | Text t -> textState.Set t
+                    | Progress p -> progress.Set p
+                    | Indeterminate i -> indeterminate.Set i
 
-    Window(
-        Visibility = Visibility.Visible,
-        WindowStyle = WindowStyle.None,
-        BorderThickness = Thickness 1,
-        BorderBrush = Brushes.LightGray,
-        AllowsTransparency = true,
-        WindowStartupLocation = WindowStartupLocation.Manual,
-        Left = windowPos SystemParameters.PrimaryScreenWidth width,
-        Top = windowPos SystemParameters.PrimaryScreenHeight height,
-        Width = width,
-        Height = height,
-        Content = canvas
-    ),
-    text,
-    progress
+                if sub <> null then
+                    sub.Dispose()
+                    sub <- null
 
-let ui2012 () =
-    let width, height = 378., 168.
-    let icon = createIcon 30
+                ctx.forceRender ())
 
-    let text =
-        TextBlock(Height = 24, FontSize = 13, Text = $"Connecting to {name}...", TextAlignment = TextAlignment.Center)
+        let textSize = 24
+        let padding = 20
 
-    let progress = ProgressBar(Width = 287, Height = 25, IsIndeterminate = true)
+        let children: Types.IView list = [
+            TextBlock.create [
+                TextBlock.dock Dock.Top
+                TextBlock.fontSize textSize
+                TextBlock.fontWeight FontWeight.SemiBold
+                TextBlock.verticalAlignment VerticalAlignment.Center
+                TextBlock.horizontalAlignment HorizontalAlignment.Center
+                TextBlock.text textState.Current
+            ]
+            ProgressBar.create [
+                ProgressBar.dock Dock.Bottom
+                ProgressBar.isIndeterminate indeterminate.Current
+                ProgressBar.value progress.Current
+                ProgressBar.height 8
+                ProgressBar.cornerRadius (CornerRadius 4)
+                ProgressBar.foreground (SolidColorBrush mainaccent)
+                ProgressBar.background (SolidColorBrush accent)
+                ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
+                ProgressBar.verticalAlignment VerticalAlignment.Center
+            ]
+            Image.create [
+                // centre in the window
+                Image.dock Dock.Bottom
+                Image.source (new Imaging.Bitmap(new IO.MemoryStream(icon)))
+                Image.stretch Stretch.Uniform
+                Image.width 128
+                Image.height 128
+                Image.horizontalAlignment HorizontalAlignment.Center
+                Image.verticalAlignment VerticalAlignment.Center
+            ]
+        ]
 
-    SetPosition icon 20 23
-    SetPosition text 58 23
-    SetPosition progress 58 51
+        let panel =
+            DockPanel.create [ DockPanel.margin (Thickness padding); DockPanel.children children ]
 
-    let canvas = Canvas()
+        // add background behind panel with some transparency and rounded corners
+        let margin = 5
+        let cornerRadius = 30
 
-    ([| icon; text; progress |]: UIElement [])
-    |> Array.iter (canvas.Children.Add >> ignore)
+        let bg =
+            Border.create [
+                Border.background (SolidColorBrush mainaccent)
+                // blur background
+                Border.effect (BlurEffect(Radius = blurRadius))
+                Border.margin (Thickness blurRadius)
+                // blur radius
+                Border.cornerRadius (CornerRadius cornerRadius)
+            ]
 
-    Window(
-        Visibility = Visibility.Visible,
-        Title = name,
-        FontFamily = FontFamily "Segoe UI Variable",
-        Background = SolidColorBrush(Color.FromRgb(0xf0uy, 0xf0uy, 0xf0uy)),
-        ResizeMode = ResizeMode.NoResize,
-        WindowStartupLocation = WindowStartupLocation.Manual,
-        Left = windowPos SystemParameters.PrimaryScreenWidth width,
-        Top =
-            windowPos SystemParameters.PrimaryScreenHeight height
-            - 24.,
-        Width = width,
-        Height = height,
-        Content = canvas
-    ),
-    text,
-    progress
+        // create container with background and corner radius
+        let fg =
+            Border.create [
+                Border.background (SolidColorBrush mainaccent)
+                Border.margin (Thickness(int (margin + blurRadius)))
+                Border.cornerRadius (CornerRadius(int (cornerRadius - margin)))
+                Border.child (
+                    Border.create [
+                        Border.background (SolidColorBrush darker)
+                        Border.margin (Thickness 4)
+                        Border.cornerRadius (CornerRadius(int (cornerRadius - margin - 4)))
+                        Border.child panel
+                    ]
+                )
+            ]
 
-let createWindow xfn =
-    let window, text, progress = ui2016 ()
-    let app = Application(MainWindow = window)
-    let u = Event<Update>()
+        Grid.create [ Grid.children [ bg; fg ] ])
 
-    // awesome pattern matching
-    let updateMatch =
-        function
-        | Text t -> text.Text <- t
-        | Progress p -> progress.Value <- p
-        | Indeterminate d -> progress.IsIndeterminate <- d
-        | SuccessMessage s ->
-            MessageBox.Show(s, $"{name} launcher", MessageBoxButton.OK, MessageBoxImage.Information)
-            |> ignore
+type MainWindow(xfn) =
+    inherit HostWindow()
 
-            app.Shutdown()
-        | ErrorMessage s ->
-            MessageBox.Show(s, $"{name} launcher", MessageBoxButton.OK, MessageBoxImage.Error)
-            |> ignore
+    let controlEvent = new Event<Control>()
+    let updateEvent = new Event<Update list>()
 
-            app.Shutdown()
-        | Shutdown -> app.Shutdown()
+    do
+        base.Title <- $"{name} Launcher"
+        base.Width <- int (575 + blurRadius * 2)
+        base.Height <- int (326 + blurRadius * 2)
+        base.WindowStartupLocation <- WindowStartupLocation.CenterScreen
+        // remove title bar
+        base.SystemDecorations <- SystemDecorations.None
+        base.CornerRadius <- CornerRadius 15
+        // set transparent background
+        base.Background <- SolidColorBrush Colors.Transparent
 
-    u.Publish.Add(fun upd -> app.Dispatcher.Invoke(fun () -> updateMatch upd))
+        // set icon (not taskbar icon afaict)
+        base.Icon <- new WindowIcon(new IO.MemoryStream(icon))
+        let comp = view updateEvent.Publish
+        base.Content <- comp
 
-    app.MainWindow.Loaded.Add(fun _ -> async { xfn u } |> Async.Start)
+        printfn "Subscribing to control events"
 
-    app.Run() |> ignore
+        controlEvent.Publish.Subscribe (function
+            | SuccessMessage text ->
+                Dispatcher.UIThread.Post(fun () ->
+                    let window = new PopupWindow(text)
+                    window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
+                    window.Show())
+            | ErrorMessage text ->
+                Dispatcher.UIThread.Post(fun () ->
+                    let window = new PopupWindow(text)
+                    window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
+                    window.Show())
+            | Shutdown ->
+                printfn "Byebye"
+                Thread.Sleep 100 // give the UI a chance to update before closing
+                Environment.Exit 1)
+        |> ignore
+
+    override _.Render(context: DrawingContext) : unit = base.Render(context: DrawingContext)
+
+    override _.OnLoaded _ =
+        printfn "Initialized MainWindow"
+        // start in another thread
+        async { xfn controlEvent updateEvent } |> Async.Start
+        printfn "Finished xfn"
+
+type App(xfn) =
+    inherit Application()
+
+    override this.Initialize() =
+        this.Styles.Add(FluentTheme())
+        this.RequestedThemeVariant <- Styling.ThemeVariant.Dark
+
+    override this.OnFrameworkInitializationCompleted() =
+        match this.ApplicationLifetime with
+        | :? IClassicDesktopStyleApplicationLifetime as desktopLifetime -> desktopLifetime.MainWindow <- MainWindow xfn
+        | _ -> ()
