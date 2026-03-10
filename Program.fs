@@ -36,7 +36,7 @@ let url = $"https://{domain}"
 let setupUrl = $"https://setup.{domain}"
 let versionUrl = $"{setupUrl}/version"
 let authUrl = $"{url}/negotiate" // /Login/Negotiate.ashx
-let joinUrl ticket = $"{url}/game/join?ticket=%s{ticket}"
+let joinUrl ticket = $"http://www.{domain}/game/join?ticket=%s{ticket}"
 let launcherScheme = $"{name.ToLowerInvariant()}-launcher"
 let authTicket = "test" // LRORL
 
