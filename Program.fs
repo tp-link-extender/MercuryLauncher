@@ -82,7 +82,13 @@ let appData () =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
         Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
     else
-        "/usr/share"
+    // there is probably a better way but this works
+        let home =
+            Environment.GetEnvironmentVariable("HOME")
+            |> fun h -> if String.IsNullOrWhiteSpace h then
+                            Environment.GetFolderPath Environment.SpecialFolder.UserProfile
+                        else h
+        System.IO.Path.Combine(home, ".local/share")
 
 let getPath (v: string) =
     let path = [| appData (); name |]
@@ -204,8 +210,29 @@ let startProcess (exePath: string) (args: string array) = Process.Start(exePath,
 
 let startProcessWine (exePath: string) (args: string array) =
     let allArgs = Array.append [| exePath |] args
+    let joined = String.Join(" ", allArgs)
 
-    Process.Start("wine", String.Join(" ", allArgs))
+    let hasNvidia =
+        System.IO.File.Exists("/proc/driver/nvidia/version")
+
+    let prefix =
+        if hasNvidia then
+            "__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia "
+        else
+            ""
+
+    let cmd = sprintf "%swine %s" prefix joined
+
+    let psi =
+        ProcessStartInfo(
+            FileName = "bash",
+            Arguments = sprintf "-c \"%s\"" cmd,
+            UseShellExecute = false
+        )
+
+    Process.Start psi
+
+
 
 let launch ticket (p, v) =
     let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket |]
@@ -278,76 +305,58 @@ let chmodExec execPath =
     with e ->
         Error(FailedToRegister e)
 
-let addDesktopEntry execPath applicationsDir p v =
-    let desktopContents =
-        $"[Desktop Entry]\n\
-            Name={name} Launcher\n\
-            Comment=Handle {launcherScheme} links\n\
-            Exec=\"{execPath}\" %%U\n\
-            Type=Application\n\
-            Terminal=false\n\
-            NoDisplay=false\n\
-            Categories=Utility;Application;\n\
-            URL={launcherScheme}:\n\
-            MimeType=x-scheme-handler/{launcherScheme};\n"
 
-    printfn $"{desktopContents}"
+let registerURILinux (p, v) =
+    //let applicationsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "share/applications")
+    let home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+    let applicationsDir = System.IO.Path.Combine(home, ".local/share/applications")
 
+    printfn "%s" applicationsDir
+
+    Directory.CreateDirectory(applicationsDir) |> ignore
+
+    let execPath = launcherPath p v
     let desktopFilename = $"{name.ToLowerInvariant()}-launcher.desktop"
     let desktopPath = Path.Combine(applicationsDir, desktopFilename)
 
+    let desktopContents =
+        $"""
+[Desktop Entry]
+Name={name} Launcher
+Comment=Handle {launcherScheme} links
+Exec="{execPath}" %%U
+Type=Application
+Terminal=false
+NoDisplay=false
+Categories=Utility;Application;
+MimeType=x-scheme-handler/{launcherScheme};
+"""
+
     try
         File.WriteAllText(desktopPath, desktopContents)
-        addToMimeapps applicationsDir desktopFilename
 
-        // also write to local applications dir
-        let localApplicationsDir =
-            Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "applications")
+        let chmod =
+            ProcessStartInfo(
+                FileName = "chmod",
+                Arguments = $"+x \"{execPath}\"",
+                UseShellExecute = false
+            )
+        Process.Start(chmod).WaitForExit()
 
-        Directory.CreateDirectory localApplicationsDir |> ignore
-
-        let localDesktopPath = Path.Combine(localApplicationsDir, desktopFilename)
-        File.WriteAllText(localDesktopPath, desktopContents)
-        addToMimeapps localApplicationsDir desktopFilename
-
-        // now register the handler
-        let psi =
+        let mime =
             ProcessStartInfo(
                 FileName = "xdg-mime",
                 Arguments = $"default {desktopFilename} x-scheme-handler/{launcherScheme}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
+                UseShellExecute = false
             )
+        Process.Start(mime).WaitForExit()
 
-        use proc = Process.Start psi
-        proc.WaitForExit()
+        Ok(p, v)
 
-        // Since that all didn't seem to work, I'm seriously out of ideas now
-
-        if proc.ExitCode <> 0 then
-            let err = proc.StandardError.ReadToEnd()
-            Error(FailedToRegister(Exception $"xdg-mime failed: {err}"))
-        else
-            Ok(p, v)
     with e ->
         Error(FailedToRegister e)
 
 
-let registerURILinux (p, v) =
-    let applicationsDir = "/usr/share/applications"
-
-    Directory.CreateDirectory applicationsDir |> ignore
-
-    printfn $"Applications dir: {applicationsDir}"
-    let execPath = launcherPath p v
-
-    // chmod the exec
-    if chmodExec execPath |> Result.isError then
-        Error(FailedToRegister(Exception "Failed to set executable permissions on the launcher."))
-    else
-        addDesktopEntry execPath applicationsDir p v
 
 let checkThatItLaunchedCorrectly (p: Process) =
     if p.HasExited then Error ClientNotFound else Ok()
@@ -566,50 +575,24 @@ let startApp xfn =
         .StartWithClassicDesktopLifetime
         [||]
 
+
 [<EntryPoint; STAThread>]
 let main args =
-    // check if on linux
-    if
-        Environment.OSVersion.Platform <> PlatformID.Win32NT
-        && not Environment.IsPrivilegedProcess
-    then
-        // request elevation
-        printfn "Requesting elevation"
-        let filename = Process.GetCurrentProcess().MainModule.FileName
+    printfn "Starting application"
 
-        let envs = [|
-            "DISPLAY=" + Environment.GetEnvironmentVariable "DISPLAY"
-            "XAUTHORITY=" + Environment.GetEnvironmentVariable "XAUTHORITY"
-        |]
+    let ticket =
+        if args = [||] then
+            ""
+        else
+            let mainArg = args[0]
 
-        let psi =
-            ProcessStartInfo(
-                FileName = "pkexec",
-                Arguments = $"""env {String.Join(" ", envs)} bash -c "{filename} {String.Join(" ", args)}" """
-            )
+            if not (mainArg.StartsWith launcherScheme) then
+                // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
+                // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
+                
+                Environment.Exit 1
 
-        let proc = Process.Start psi
-        proc.WaitForExit()
+            mainArg.Substring(launcherScheme.Length + 1)
 
-        printfn "Elevated process exited with code: %d" proc.ExitCode
-
-        proc.ExitCode
-    else
-        printfn "Starting application"
-
-        let ticket =
-            if args = [||] then
-                ""
-            else
-                let mainArg = args[0]
-
-                if not (mainArg.StartsWith launcherScheme) then
-                    // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
-                    // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
-
-                    Environment.Exit 1
-
-                mainArg.Substring(launcherScheme.Length + 1)
-
-        // start app as a thread
-        startApp (init ticket)
+    // start app as a thread
+    startApp (init ticket)
