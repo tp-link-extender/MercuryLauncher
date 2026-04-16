@@ -36,7 +36,10 @@ let url = $"https://{domain}"
 let setupUrl = $"https://setup.{domain}"
 let versionUrl = $"{setupUrl}/version"
 let authUrl = $"{url}/negotiate" // /Login/Negotiate.ashx
-let joinUrl ticket = $"http://www.{domain}/game/join?ticket=%s{ticket}"
+
+let joinUrl ticket =
+    $"http://www.{domain}/game/join?ticket=%s{ticket}"
+
 let launcherScheme = $"{name.ToLowerInvariant()}-launcher"
 let authTicket = "test" // LRORL
 
@@ -82,12 +85,15 @@ let appData () =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
         Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
     else
-    // there is probably a better way but this works
+        // there is probably a better way but this works
         let home =
             Environment.GetEnvironmentVariable("HOME")
-            |> fun h -> if String.IsNullOrWhiteSpace h then
-                            Environment.GetFolderPath Environment.SpecialFolder.UserProfile
-                        else h
+            |> fun h ->
+                if String.IsNullOrWhiteSpace h then
+                    Environment.GetFolderPath Environment.SpecialFolder.UserProfile
+                else
+                    h
+
         System.IO.Path.Combine(home, ".local/share")
 
 let getPath (v: string) =
@@ -212,8 +218,7 @@ let startProcessWine (exePath: string) (args: string array) =
     let allArgs = Array.append [| exePath |] args
     let joined = String.Join(" ", allArgs)
 
-    let hasNvidia =
-        System.IO.File.Exists("/proc/driver/nvidia/version")
+    let hasNvidia = File.Exists "/proc/driver/nvidia/version"
 
     let prefix =
         if hasNvidia then
@@ -224,11 +229,7 @@ let startProcessWine (exePath: string) (args: string array) =
     let cmd = sprintf "%swine %s" prefix joined
 
     let psi =
-        ProcessStartInfo(
-            FileName = "bash",
-            Arguments = sprintf "-c \"%s\"" cmd,
-            UseShellExecute = false
-        )
+        ProcessStartInfo(FileName = "bash", Arguments = sprintf "-c \"%s\"" cmd, UseShellExecute = false)
 
     Process.Start psi
 
@@ -307,13 +308,16 @@ let chmodExec execPath =
 
 
 let registerURILinux (p, v) =
-    //let applicationsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "share/applications")
-    let home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+    // let applicationsDir =
+    //     Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "share/applications")
+
+    let home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
+
     let applicationsDir = System.IO.Path.Combine(home, ".local/share/applications")
 
     printfn "%s" applicationsDir
 
-    Directory.CreateDirectory(applicationsDir) |> ignore
+    Directory.CreateDirectory applicationsDir |> ignore
 
     let execPath = launcherPath p v
     let desktopFilename = $"{name.ToLowerInvariant()}-launcher.desktop"
@@ -336,11 +340,8 @@ MimeType=x-scheme-handler/{launcherScheme};
         File.WriteAllText(desktopPath, desktopContents)
 
         let chmod =
-            ProcessStartInfo(
-                FileName = "chmod",
-                Arguments = $"+x \"{execPath}\"",
-                UseShellExecute = false
-            )
+            ProcessStartInfo(FileName = "chmod", Arguments = $"+x \"{execPath}\"", UseShellExecute = false)
+
         Process.Start(chmod).WaitForExit()
 
         let mime =
@@ -349,6 +350,7 @@ MimeType=x-scheme-handler/{launcherScheme};
                 Arguments = $"default {desktopFilename} x-scheme-handler/{launcherScheme}",
                 UseShellExecute = false
             )
+
         Process.Start(mime).WaitForExit()
 
         Ok(p, v)
@@ -589,7 +591,7 @@ let main args =
             if not (mainArg.StartsWith launcherScheme) then
                 // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
                 // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
-                
+
                 Environment.Exit 1
 
             mainArg.Substring(launcherScheme.Length + 1)
