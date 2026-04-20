@@ -4,9 +4,7 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.Controls.ApplicationLifetimes
 open Avalonia.FuncUI
-open Avalonia.FuncUI.DSL
 open Avalonia.FuncUI.Hosts
-open Avalonia.Layout
 open Avalonia.Media
 open Avalonia.Themes.Fluent
 open Config
@@ -38,7 +36,7 @@ let viewPopup text =
     Component(fun _ ->
         let padding = 10
 
-        Border.create [
+        DSL.Border.create [
             Border.margin (Thickness(padding, padding, padding, int (padding * 2)))
             Border.child (
                 TextBlock.create [
@@ -93,7 +91,7 @@ let view (u: IEvent<Update list>) =
         let padding = 20
 
         let children: Types.IView list = [
-            TextBlock.create [
+            DSL.TextBlock.create [
                 TextBlock.dock Dock.Top
                 TextBlock.fontSize textSize
                 TextBlock.fontWeight FontWeight.SemiBold
@@ -101,7 +99,7 @@ let view (u: IEvent<Update list>) =
                 TextBlock.horizontalAlignment HorizontalAlignment.Center
                 TextBlock.text textState.Current
             ]
-            ProgressBar.create [
+            DSL.ProgressBar.create [
                 ProgressBar.dock Dock.Bottom
                 ProgressBar.isIndeterminate indeterminate.Current
                 ProgressBar.value progress.Current
@@ -112,7 +110,7 @@ let view (u: IEvent<Update list>) =
                 ProgressBar.horizontalAlignment HorizontalAlignment.Stretch
                 ProgressBar.verticalAlignment VerticalAlignment.Center
             ]
-            Image.create [
+            DSL.Image.create [
                 // centre in the window
                 Image.dock Dock.Bottom
                 Image.source (new Imaging.Bitmap(new IO.MemoryStream(icon)))
@@ -125,14 +123,14 @@ let view (u: IEvent<Update list>) =
         ]
 
         let panel =
-            DockPanel.create [ DockPanel.margin (Thickness padding); DockPanel.children children ]
+            DSL.DockPanel.create [ DockPanel.margin (Thickness padding); DockPanel.children children ]
 
         // add background behind panel with some transparency and rounded corners
         let margin = 5
         let cornerRadius = 30
 
         let bg =
-            Border.create [
+            DSL.Border.create [
                 Border.background (SolidColorBrush mainaccent)
                 // blur background
                 Border.effect (BlurEffect(Radius = blurRadius))
@@ -143,7 +141,7 @@ let view (u: IEvent<Update list>) =
 
         // create container with background and corner radius
         let fg =
-            Border.create [
+            DSL.Border.create [
                 Border.background (SolidColorBrush mainaccent)
                 Border.margin (Thickness(int (margin + blurRadius)))
                 Border.cornerRadius (CornerRadius(int (cornerRadius - margin)))
@@ -157,7 +155,7 @@ let view (u: IEvent<Update list>) =
                 )
             ]
 
-        Grid.create [ Grid.children [ bg; fg ] ])
+        DSL.Grid.create [ Grid.children [ bg; fg ] ])
 
 type MainWindow(xfn) =
     inherit HostWindow()
@@ -171,7 +169,7 @@ type MainWindow(xfn) =
         base.Height <- int (326 + blurRadius * 2)
         base.WindowStartupLocation <- WindowStartupLocation.CenterScreen
         // remove title bar
-        base.SystemDecorations <- SystemDecorations.None
+        base.WindowDecorations <- WindowDecorations.None
         base.CornerRadius <- CornerRadius 15
         // set transparent background
         base.Background <- SolidColorBrush Colors.Transparent
