@@ -183,21 +183,29 @@ type MainWindow(xfn) =
 
         printfn "Subscribing to control events"
 
+        // Whether a message popup is currently open. While one is open, a Shutdown request is deferred until the popup is closed, so the user has a chance to read the message before the app exits.
+        let mutable popupOpen = false
+
         controlEvent.Publish.Subscribe (function
-            | SuccessMessage text ->
-                Dispatcher.UIThread.Post(fun () ->
-                    let window = new PopupWindow(text)
-                    window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
-                    window.Show())
+            | SuccessMessage text
             | ErrorMessage text ->
                 Dispatcher.UIThread.Post(fun () ->
                     let window = new PopupWindow(text)
-                    window.Closed.Subscribe(fun _ -> controlEvent.Trigger Shutdown) |> ignore
+                    popupOpen <- true
+
+                    window.Closed.Subscribe(fun _ ->
+                        popupOpen <- false
+                        controlEvent.Trigger Shutdown)
+                    |> ignore
+
                     window.Show())
             | Shutdown ->
-                printfn "Byebye"
-                Thread.Sleep 100 // give the UI a chance to update before closing
-                Environment.Exit 1)
+                // defer the exit to the UI thread; if a message popup is open, wait for the user to close it (its Closed handler triggers Shutdown again, at which point this can actually exit)
+                Dispatcher.UIThread.Post(fun () ->
+                    if not popupOpen then
+                        printfn "Byebye"
+                        Thread.Sleep 100 // give the UI a chance to update before closing
+                        Environment.Exit 1))
         |> ignore
 
     override _.Render(context: DrawingContext) : unit = base.Render(context: DrawingContext)
