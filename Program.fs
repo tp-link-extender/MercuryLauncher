@@ -573,6 +573,7 @@ let startApp xfn =
         .Configure(fun () -> App xfn)
         .UsePlatformDetect()
         .UseSkia()
+        .UseHarfBuzz()
         .WithInterFont()
         .StartWithClassicDesktopLifetime
         [||]
