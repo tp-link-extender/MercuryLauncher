@@ -87,7 +87,7 @@ let appData () =
     else
         // there is probably a better way but this works
         let home =
-            Environment.GetEnvironmentVariable("HOME")
+            Environment.GetEnvironmentVariable "HOME"
             |> fun h ->
                 if String.IsNullOrWhiteSpace h then
                     Environment.GetFolderPath Environment.SpecialFolder.UserProfile
