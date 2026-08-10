@@ -24,6 +24,7 @@ type ErrorType =
     | ClientNotFound
     | FailedToRemoveOldVersions of int
     | FailedToLaunch of exn
+    | FailedToLaunchUmu of exn
     | FailedToRegister of exn
 
 let (>>=) f x = bind x f
@@ -214,7 +215,7 @@ let ensurePath fn (p, v) = Ok(File.Exists(fn p v), p, v)
 
 let startProcess (exePath: string) (args: string array) = Process.Start(exePath, args)
 
-let startProcessWine (exePath: string) (args: string array) =
+let startProcessUmu (exePath: string) (args: string array) =
     let allArgs = Array.append [| exePath |] args
     let joined = String.Join(" ", allArgs)
 
@@ -226,7 +227,7 @@ let startProcessWine (exePath: string) (args: string array) =
         else
             ""
 
-    let cmd = sprintf "%swine %s" prefix joined
+    let cmd = sprintf "%sumu-run %s" prefix joined
 
     let psi =
         ProcessStartInfo(FileName = "bash", Arguments = sprintf "-c \"%s\"" cmd, UseShellExecute = false)
@@ -238,16 +239,16 @@ let startProcessWine (exePath: string) (args: string array) =
 let launch ticket (p, v) =
     let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket |]
 
-    try
-        let fn =
-            if Environment.OSVersion.Platform = PlatformID.Win32NT then
-                startProcess
-            else
-                startProcessWine
-
-        Ok(fn (playerPath p v) procArgs)
-    with e ->
-        Error(FailedToLaunch e)
+    if Environment.OSVersion.Platform = PlatformID.Win32NT then
+        try
+            Ok(startProcess (playerPath p v) procArgs)
+        with e ->
+            Error(FailedToLaunch e)
+    else
+        try
+            Ok(startProcessUmu (playerPath p v) procArgs)
+        with e ->
+            Error(FailedToLaunchUmu e)
 
 // Register the protocol handler to this application
 let registerURIWindows (p, v) =
@@ -306,7 +307,6 @@ let chmodExec execPath =
     with e ->
         Error(FailedToRegister e)
 
-
 let registerURILinux (p, v) =
     // let applicationsDir =
     //     Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "share/applications")
@@ -357,8 +357,6 @@ MimeType=x-scheme-handler/{launcherScheme};
 
     with e ->
         Error(FailedToRegister e)
-
-
 
 let checkThatItLaunchedCorrectly (p: Process) =
     if p.HasExited then Error ClientNotFound else Ok()
@@ -463,6 +461,16 @@ let handleError (c: Event<Control>) =
         c.Trigger(
             ErrorMessage
                 $"Failed to launch {name}.\n\
+                \n\
+                Details: {ex.Message}"
+        )
+    | FailedToLaunchUmu ex ->
+        c.Trigger(
+            ErrorMessage
+                $"Failed to launch {name}.\n\
+                Make sure you have umu-run installed and configured correctly.\n\
+                \n\
+                https://github.com/Open-Wine-Components/umu-launcher\n\
                 \n\
                 Details: {ex.Message}"
         )
@@ -577,7 +585,6 @@ let startApp xfn =
         .WithInterFont()
         .StartWithClassicDesktopLifetime
         [||]
-
 
 [<EntryPoint; STAThread>]
 let main args =
