@@ -610,19 +610,31 @@ let main args =
 
             mainArg.Substring(launcherScheme.Length + 1)
 
-    // get "2013" or "2016" from the start of the ticket
-    let ticket = ticketAndVersion.Substring 4
+    // parse the "2013" / "2016" client version prefix from the start of the
+    // URL, e.g. "mercury-launcher:2016<rest>" -> ticket "<rest>".
+    // Without a URL argument this is a plain install run and there is no ticket.
+    let ticket, version =
+        match ticketAndVersion with
+        | "" -> "", Version.Client2013
+        | value when value.Length >= 4 ->
+            let version =
+                match value.Substring(0, 4) with
+                | "2013" -> Version.Client2013
+                | "2016" -> Version.Client2016
+                | _ ->
+                    // control.Trigger(ErrorMessage $"The ticket must start with 2013 or 2016.")
+                    printfn $"The ticket must start with 2013 or 2016." |> ignore
 
-    let version =
-        match ticketAndVersion.Substring(0, 4) with
-        | "2013" -> Version.Client2013
-        | "2016" -> Version.Client2016
+                    Environment.Exit 1
+                    Version.Client2013
+
+            value.Substring 4, version
         | _ ->
             // control.Trigger(ErrorMessage $"The ticket must start with 2013 or 2016.")
             printfn $"The ticket must start with 2013 or 2016." |> ignore
 
             Environment.Exit 1
-            Version.Client2013 // satisfy compiler
+            "", Version.Client2013
 
     // start app as a thread
     startApp (init ticket version)
