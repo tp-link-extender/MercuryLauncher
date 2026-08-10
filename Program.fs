@@ -27,6 +27,10 @@ type ErrorType =
     | FailedToLaunchUmu of exn
     | FailedToRegister of exn
 
+type Version =
+    | Client2013
+    | Client2016
+
 let (>>=) f x = bind x f
 
 let log i =
@@ -39,7 +43,9 @@ let versionUrl = $"{setupUrl}/version"
 let authUrl = $"{url}/negotiate" // /Login/Negotiate.ashx
 
 let joinUrl ticket =
-    $"http://www.{domain}/game/join?ticket=%s{ticket}"
+    function
+    | Client2013 -> $"https://www.{domain}/game/join?ticket=%s{ticket}"
+    | Client2016 -> $"https://www.{domain}/game/join/2016?ticket=%s{ticket}"
 
 let launcherScheme = $"{name.ToLowerInvariant()}-launcher"
 let authTicket = "test" // LRORL
@@ -236,8 +242,8 @@ let startProcessUmu (exePath: string) (args: string array) =
 
 
 
-let launch ticket (p, v) =
-    let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket |]
+let launch ticket version (p, v) =
+    let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket version |]
 
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
         try
@@ -517,7 +523,7 @@ let downloadAndInstallLauncher (client: HttpClient) (u: Event<Update list>) (d, 
         >>= trigger u [ Text "Installing launcher..." ]
         >>= saveLauncher (p, v)
 
-let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket (p, v) =
+let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket version (p, v) =
     if ticket = "" then
         u.Trigger [ Text $"Clearing old versions..." ]
         let r = clearOldVersions p v ()
@@ -532,13 +538,13 @@ let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket (p, v) 
     else
         u.Trigger [ Text $"Starting {name}..." ]
 
-        launch ticket (p, v)
+        launch ticket version (p, v)
         >>= trigger u [ Text $"Finishing up..." ]
         >>= checkThatItLaunchedCorrectly
         >>= trigger u [ Text $"Clearing old versions..." ]
         >>= clearOldVersions p v
 
-let init ticket (c: Event<Control>) (u: Event<Update list>) =
+let init ticket version (c: Event<Control>) (u: Event<Update list>) =
     u.Trigger [ Text $"Connecting to {name}..."; Indeterminate false ]
 
     use client = new HttpClient()
@@ -566,7 +572,7 @@ let init ticket (c: Event<Control>) (u: Event<Update list>) =
              else
                  registerURILinux)
         >>= yes (fun () -> log "registered" |> ignore)
-        >>= launchAndComplete c u ticket
+        >>= launchAndComplete c u ticket version
 
     match result with
     | Ok _ ->
@@ -590,7 +596,7 @@ let startApp xfn =
 let main args =
     printfn "Starting application"
 
-    let ticket =
+    let ticketAndVersion =
         if args = [||] then
             ""
         else
@@ -598,11 +604,25 @@ let main args =
 
             if not (mainArg.StartsWith launcherScheme) then
                 // control.Trigger(ErrorMessage $"The first argument must be a {launcherScheme} URL.")
-                // printfn $"The first argument must be a {launcherScheme} URL." |> ignore
+                printfn $"The first argument must be a {launcherScheme} URL." |> ignore
 
                 Environment.Exit 1
 
             mainArg.Substring(launcherScheme.Length + 1)
 
+    // get "2013" or "2016" from the start of the ticket
+    let ticket = ticketAndVersion.Substring 4
+
+    let version =
+        match ticketAndVersion.Substring(0, 4) with
+        | "2013" -> Version.Client2013
+        | "2016" -> Version.Client2016
+        | _ ->
+            // control.Trigger(ErrorMessage $"The ticket must start with 2013 or 2016.")
+            printfn $"The ticket must start with 2013 or 2016." |> ignore
+
+            Environment.Exit 1
+            Version.Client2013 // satisfy compiler
+
     // start app as a thread
-    startApp (init ticket)
+    startApp (init ticket version)
