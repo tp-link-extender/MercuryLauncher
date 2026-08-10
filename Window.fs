@@ -185,27 +185,35 @@ type MainWindow(xfn) =
 
         // Whether a message popup is currently open. While one is open, a Shutdown request is deferred until the popup is closed, so the user has a chance to read the message before the app exits.
         let mutable popupOpen = false
+        // Whether the run ended in an error; success exits with code 0, failures with code 1.
+        let mutable hadError = false
+
+        let showMessagePopup text =
+            Dispatcher.UIThread.Post(fun () ->
+                let window = new PopupWindow(text)
+                popupOpen <- true
+
+                window.Closed.Subscribe(fun _ ->
+                    popupOpen <- false
+                    controlEvent.Trigger Shutdown)
+                |> ignore
+
+                window.Show())
 
         controlEvent.Publish.Subscribe (function
-            | SuccessMessage text
+            | SuccessMessage text ->
+                hadError <- false
+                showMessagePopup text
             | ErrorMessage text ->
-                Dispatcher.UIThread.Post(fun () ->
-                    let window = new PopupWindow(text)
-                    popupOpen <- true
-
-                    window.Closed.Subscribe(fun _ ->
-                        popupOpen <- false
-                        controlEvent.Trigger Shutdown)
-                    |> ignore
-
-                    window.Show())
+                hadError <- true
+                showMessagePopup text
             | Shutdown ->
                 // defer the exit to the UI thread; if a message popup is open, wait for the user to close it (its Closed handler triggers Shutdown again, at which point this can actually exit)
                 Dispatcher.UIThread.Post(fun () ->
                     if not popupOpen then
                         printfn "Byebye"
                         Thread.Sleep 100 // give the UI a chance to update before closing
-                        Environment.Exit 1))
+                        Environment.Exit(if hadError then 1 else 0)))
         |> ignore
 
     override _.Render(context: DrawingContext) : unit = base.Render(context: DrawingContext)
