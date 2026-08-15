@@ -44,8 +44,8 @@ let authUrl = $"{url}/negotiate" // /Login/Negotiate.ashx
 
 let joinUrl ticket =
     function
-    | Client2013 -> $"https://www.{domain}/game/join?ticket=%s{ticket}"
-    | Client2016 -> $"https://www.{domain}/game/join/2016?ticket=%s{ticket}"
+    | Client2013 -> $"https://{domain}/game/join?ticket=%s{ticket}"
+    | Client2016 -> $"https://{domain}/game/join/2016?ticket=%s{ticket}"
 
 let launcherScheme = $"{name.ToLowerInvariant()}-launcher"
 let authTicket = "test" // LRORL
