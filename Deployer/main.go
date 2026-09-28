@@ -1,4 +1,4 @@
-// Mercury Setup Deployer 4
+// Mercury Setup Deployer 5
 // The only setup deployer that isn't overengineered (again!)
 
 package main
@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	staging = "./staging"
-	output  = "./setup"
-	name    = "Mercury"
+	output   = "./setup"
+	name     = "Mercury"
+	staging  = "./staging"
+	stagingD = staging + "/%s"
 )
 
 var launchers = map[string]string{
@@ -28,14 +29,22 @@ var launchers = map[string]string{
 
 var encoding = base32.NewEncoding("0123456789abcdefghijklmnopqrstuv").WithPadding(base32.NoPadding)
 
-func compressStagingDir(o *bytes.Buffer) (id string, err error) {
+func compressStagingDir(o *bytes.Buffer, staging string) (id string, err error) {
 	gz, _ := gzip.NewWriterLevel(o, gzip.BestCompression)
-	defer gz.Close()
 
 	w := tar.NewWriter(gz)
-	defer w.Close()
 
 	if err = w.AddFS(os.DirFS(staging)); err != nil {
+		return
+	}
+
+	// close the writers before hashing so the buffer holds the complete
+	// archive and each year's content hashes uniquely
+	if err = w.Close(); err != nil {
+		return
+	}
+
+	if err = gz.Close(); err != nil {
 		return
 	}
 
@@ -45,7 +54,7 @@ func compressStagingDir(o *bytes.Buffer) (id string, err error) {
 	return enchash, nil
 }
 
-func writeStagingDir(hash string, o *bytes.Buffer) (err error) {
+func writeStagingDir(hash string, o *bytes.Buffer, output string) (err error) {
 	// write to output file
 	outputFile, err := os.Create(output + "/" + hash)
 	if err != nil {
@@ -60,102 +69,111 @@ func writeStagingDir(hash string, o *bytes.Buffer) (err error) {
 	return
 }
 
-func main() {
-	fmt.Println("MERCURY SETUP DEPLOYER 4")
-
-	stagingFiles, err := os.ReadDir("staging")
+// compress a single year's staging directory and write it to that year's
+// output directory, e.g. staging/2013 -> setup/2013/{hash}
+func deployYear(stagingDir, outputDir string) error {
+	stagingFiles, err := os.ReadDir(stagingDir)
 	if err != nil {
-		fmt.Println("Error reading staging directory:", err)
-		fmt.Println("Please create the staging directory if it doesn't exist and place your files in it, or run this script from a different directory.")
-		os.Exit(1)
+		return fmt.Errorf("error reading staging directory %s: %w", stagingDir, err)
 	}
 	if len(stagingFiles) == 0 {
-		fmt.Println("Staging directory is empty. Please place your files in the staging directory, or run this script from a different directory.")
-		os.Exit(1)
+		return fmt.Errorf("staging directory %s is empty. Please place your files in it", stagingDir)
 	}
-
-	fmt.Println("Staging directory contains files.")
-
-	// check if each launcher exists
-	for name, path := range launchers {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			fmt.Printf("Launcher for %s not found at %s. Please ensure all launchers are present.\n", name, path)
-			os.Exit(1)
-		}
-	}
-
-	fmt.Println("All launchers are present.")
 
 	// create output directory if it doesn't exist
-	if _, err := os.Stat(output); os.IsNotExist(err) {
-		if err = os.Mkdir(output, 0o755); err != nil {
-			fmt.Println("Error creating output directory:", err)
-			os.Exit(1)
+	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+		if err = os.Mkdir(outputDir, 0o755); err != nil {
+			return fmt.Errorf("error creating output directory: %w", err)
 		}
 	}
 
-	fmt.Println("Output directory is ready.")
+	fmt.Printf("Deploying %s -> %s\n", stagingDir, outputDir)
 
-	fmt.Println("Compressing staging directory...")
 	start := time.Now()
 
 	o := &bytes.Buffer{}
-	id, err := compressStagingDir(o)
+	id, err := compressStagingDir(o, stagingDir)
 	if err != nil {
-		fmt.Println("Error compressing staging directory:", err)
-		os.Exit(1)
+		return fmt.Errorf("error compressing staging directory: %w", err)
 	}
 
 	fmt.Printf("Staging directory compressed in %s\n", time.Since(start))
 
-	// gzip staging files to output directory
 	start = time.Now()
 
-	if err := writeStagingDir(id, o); err != nil {
-		fmt.Println("Error compressing staging files:", err)
-		os.Exit(1)
+	if err := writeStagingDir(id, o, outputDir); err != nil {
+		return fmt.Errorf("error compressing staging files: %w", err)
 	}
 
 	fmt.Printf("Staging files written to output directory in %s\n", time.Since(start))
 
-	for name, path := range launchers {
-		launcherData, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Printf("Error reading launcher %s: %v\n", name, err)
-			os.Exit(1)
-		}
-
-		// copy launcher to output directory
-		outputLauncherFile, err := os.Create(output + "/" + name)
-		if err != nil {
-			fmt.Printf("Error creating output launcher file %s: %v\n", name, err)
-			os.Exit(1)
-		}
-		if _, err := outputLauncherFile.Write(launcherData); err != nil {
-			fmt.Printf("Error writing to output launcher file %s: %v\n", name, err)
-			os.Exit(1)
-		}
-		if err := outputLauncherFile.Close(); err != nil {
-			fmt.Printf("Error closing output launcher file %s: %v\n", name, err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("Launcher %s copied to output directory.\n", name)
-	}
-
-	// create or modify version.txt in output directory
-	versionFile, err := os.Create(output + "/version")
+	// create or overwrite the version file in the output directory
+	versionFile, err := os.Create(outputDir + "/version")
 	if err != nil {
-		fmt.Println("Error creating version file:", err)
-		os.Exit(1)
+		return fmt.Errorf("error creating version file: %w", err)
 	}
 	defer versionFile.Close()
 
 	if _, err := versionFile.WriteString(id); err != nil {
-		fmt.Println("Error writing to version file:", err)
-		os.Exit(1)
+		return fmt.Errorf("error writing to version file: %w", err)
 	}
 
 	fmt.Println("Version file created with ID", id)
+
+	return nil
+}
+
+func main() {
+	fmt.Println("MERCURY SETUP DEPLOYER 5")
+
+	if err := os.Mkdir(output, 0o755); err != nil && !os.IsExist(err) {
+		fmt.Println("Error creating output directory:", err)
+		os.Exit(1)
+	}
+
+	// a single launcher build serves both client years, so it is copied once
+	// to the setup root rather than into each year's directory
+	for launcherName, path := range launchers {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			fmt.Printf("Launcher %s not found at %s. Please ensure all launchers are present.\n", launcherName, path)
+			os.Exit(1)
+		}
+	}
+
+	for launcherName, path := range launchers {
+		launcherData, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Printf("Error reading launcher %s: %v\n", launcherName, err)
+			os.Exit(1)
+		}
+
+		// copy launcher to output directory
+		outputLauncherFile, err := os.Create(output + "/" + launcherName)
+		if err != nil {
+			fmt.Printf("Error creating output launcher file %s: %v\n", launcherName, err)
+			os.Exit(1)
+		}
+		if _, err := outputLauncherFile.Write(launcherData); err != nil {
+			fmt.Printf("Error writing to output launcher file %s: %v\n", launcherName, err)
+			os.Exit(1)
+		}
+		if err := outputLauncherFile.Close(); err != nil {
+			fmt.Printf("Error closing output launcher file %s: %v\n", launcherName, err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Launcher %s copied to output directory.\n", launcherName)
+	}
+
+	// each year gets its own staging directory and output directory, so the
+	// Launcher can fetch per-year clients from setup.<domain>/<year>/...
+	for _, year := range []string{"2013", "2016"} {
+		if err := deployYear(fmt.Sprintf(stagingD, year), output+"/"+year); err != nil {
+			fmt.Printf("Error deploying %s: %v\n", year, err)
+			fmt.Println("Skipping to next year...")
+			continue
+		}
+	}
+
 	fmt.Println("Setup deployer completed successfully.")
 }

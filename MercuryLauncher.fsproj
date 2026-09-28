@@ -26,6 +26,12 @@
 		<Compile Include="Program.fs" />
 	</ItemGroup>
 	<ItemGroup>
+		<!-- the launcher always needs these at runtime; some trimmers
+			 mistakenly drop them from the bundle -->
+		<TrimmerRootAssembly Include="System.Net.Http" />
+		<TrimmerRootAssembly Include="System.Formats.Tar" />
+	</ItemGroup>
+	<ItemGroup>
 		<PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
 		<PackageReference Include="Avalonia.FuncUI" Version="2.0.0" />

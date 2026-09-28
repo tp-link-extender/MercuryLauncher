@@ -31,6 +31,11 @@ type Version =
     | Client2013
     | Client2016
 
+let versionString =
+    function
+    | Client2013 -> "2013"
+    | Client2016 -> "2016"
+
 let (>>=) f x = bind x f
 
 let log i =
@@ -39,7 +44,6 @@ let log i =
 
 let url = $"https://{domain}"
 let setupUrl = $"https://setup.{domain}"
-let versionUrl = $"{setupUrl}/version"
 let authUrl = $"{url}/negotiate" // /Login/Negotiate.ashx
 
 let joinUrl ticket =
@@ -47,12 +51,22 @@ let joinUrl ticket =
     | Client2013 -> $"https://{domain}/game/join?ticket=%s{ticket}"
     | Client2016 -> $"https://{domain}/game/join/2016?ticket=%s{ticket}"
 
+let versionUrls =
+    [ Client2013, $"{setupUrl}/2013/version"
+      Client2016, $"{setupUrl}/2016/version" ]
+    |> Map.ofList
+
+let setupUrlFor =
+    function
+    | Client2013 -> $"{setupUrl}/2013"
+    | Client2016 -> $"{setupUrl}/2016"
+
 let launcherScheme = $"{name.ToLowerInvariant()}-launcher"
 let authTicket = "test" // LRORL
 
-let requestVersion (client: HttpClient) =
+let requestVersion (client: HttpClient) v =
     try
-        use response = (client.GetAsync versionUrl).Result
+        use response = (client.GetAsync versionUrls[v]).Result
 
         match response.StatusCode with
         | HttpStatusCode.OK -> Ok(response.Content.ReadAsStringAsync().Result)
@@ -69,9 +83,14 @@ let validateVersion (v: string) =
 // add the versions directory to the path
 let versionsPath s = Path.Combine(s, "Versions")
 
+// add the year (2013 / 2016) directory to the path
+let yearPath s =
+    function
+    | Client2013 -> Path.Combine(versionsPath s, "2013")
+    | Client2016 -> Path.Combine(versionsPath s, "2016")
+
 // add the version to the path
-let versionPath s v =
-    Path.Combine(versionsPath s, $"version-%s{v}")
+let versionPath s year v = Path.Combine(yearPath s year, $"version-%s{v}")
 
 let launcherFilename () =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
@@ -79,14 +98,14 @@ let launcherFilename () =
     else
         $"{name}Launcher_linux-x64"
 
-let launcherPath s v =
-    Path.Combine(versionPath s v, launcherFilename ())
+let launcherPath s year v =
+    Path.Combine(versionPath s year v, launcherFilename ())
 
-let playerPath s v =
-    Path.Combine(versionPath s v, $"{name}PlayerBeta.exe")
+let playerPath s year v =
+    Path.Combine(versionPath s year v, $"{name}PlayerBeta.exe")
 
-let studioPath s v =
-    Path.Combine(versionPath s v, $"{name}StudioBeta.exe")
+let studioPath s year v =
+    Path.Combine(versionPath s year v, $"{name}StudioBeta.exe")
 
 let appData () =
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
@@ -103,10 +122,10 @@ let appData () =
 
         System.IO.Path.Combine(home, ".local/share")
 
-let getPath (v: string) =
+let getPath year (v: string) =
     let path = [| appData (); name |]
 
-    Ok(path |> Path.Combine, v)
+    Ok(path |> Path.Combine, year, v)
 
 let downloadBuffer = 8192
 
@@ -120,10 +139,10 @@ let rec readStream (write: byte[] -> int -> unit) (s: Stream) =
     else
         ()
 
-let download (client: HttpClient) (u: Event<Update list>) thing path =
+let download (client: HttpClient) (u: Event<Update list>) (baseUrl: string) thing path =
     try
         use response =
-            client.GetAsync($"{setupUrl}/{path}", HttpCompletionOption.ResponseHeadersRead).Result
+            client.GetAsync($"{baseUrl}/{path}", HttpCompletionOption.ResponseHeadersRead).Result
 
         u.Trigger [ Indeterminate false ]
 
@@ -169,8 +188,8 @@ let ungzipClient (data: byte array) =
     with e ->
         Error(FailedToUnpack e)
 
-let untarClient p v (tar: MemoryStream) =
-    let path = versionPath p v
+let untarClient p year v (tar: MemoryStream) =
+    let path = versionPath p year v
 
     try
         let tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName())
@@ -212,12 +231,12 @@ let untarClient p v (tar: MemoryStream) =
 
             printfn $"Client installed to {path}"
 
-            Ok(p, v)
+            Ok(p, year, v)
 
     with e ->
         Error(FailedToInstall("client", e))
 
-let ensurePath fn (p, v) = Ok(File.Exists(fn p v), p, v)
+let ensurePath fn (p, year, v) = Ok(File.Exists(fn p year v), p, year, v)
 
 let startProcess (exePath: string) (args: string array) = Process.Start(exePath, args)
 
@@ -242,22 +261,22 @@ let startProcessUmu (exePath: string) (args: string array) =
 
 
 
-let launch ticket version (p, v) =
-    let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket version |]
+let launch ticket year (p, _, v) =
+    let procArgs = [| $"--play"; "-a"; authUrl; "-t"; authTicket; "-j"; joinUrl ticket year |]
 
     if Environment.OSVersion.Platform = PlatformID.Win32NT then
         try
-            Ok(startProcess (playerPath p v) procArgs)
+            Ok(startProcess (playerPath p year v) procArgs)
         with e ->
             Error(FailedToLaunch e)
     else
         try
-            Ok(startProcessUmu (playerPath p v) procArgs)
+            Ok(startProcessUmu (playerPath p year v) procArgs)
         with e ->
             Error(FailedToLaunchUmu e)
 
 // Register the protocol handler to this application
-let registerURIWindows (p, v) =
+let registerURIWindows (p, year, v) =
     try
         let key =
             Registry.CurrentUser.CreateSubKey($"Software\\Classes\\{launcherScheme}", true)
@@ -270,10 +289,10 @@ let registerURIWindows (p, v) =
         let openKey = shellKey.CreateSubKey "open"
         let commandKey = openKey.CreateSubKey "command"
 
-        let exePath = launcherPath p v
+        let exePath = launcherPath p year v
         commandKey.SetValue("", $"\"{exePath}\" %%1")
 
-        Ok(p, v)
+        Ok(p, year, v)
     with e ->
         Error(FailedToRegister e)
 
@@ -313,7 +332,7 @@ let chmodExec execPath =
     with e ->
         Error(FailedToRegister e)
 
-let registerURILinux (p, v) =
+let registerURILinux (p, year, v) =
     // let applicationsDir =
     //     Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData, "share/applications")
 
@@ -325,7 +344,7 @@ let registerURILinux (p, v) =
 
     Directory.CreateDirectory applicationsDir |> ignore
 
-    let execPath = launcherPath p v
+    let execPath = launcherPath p year v
     let desktopFilename = $"{name.ToLowerInvariant()}-launcher.desktop"
     let desktopPath = Path.Combine(applicationsDir, desktopFilename)
 
@@ -359,7 +378,7 @@ MimeType=x-scheme-handler/{launcherScheme};
 
         Process.Start(mime).WaitForExit()
 
-        Ok(p, v)
+        Ok(p, year, v)
 
     with e ->
         Error(FailedToRegister e)
@@ -367,15 +386,17 @@ MimeType=x-scheme-handler/{launcherScheme};
 let checkThatItLaunchedCorrectly (p: Process) =
     if p.HasExited then Error ClientNotFound else Ok()
 
-let clearOldVersions (p: string) v () =
-    let path = versionsPath p
+// clear old versions of this client year only, leaving the other year's
+// installation (e.g. 2013 alongside 2016) untouched
+let clearOldVersions (p: string) year v () =
+    let path = yearPath p year
 
     if Directory.Exists path then
         let failedVersions =
             Directory.GetDirectories path
             |> Array.filter (fun d ->
-                printfn "comparing %s to %s" d (versionPath p v)
-                d <> versionPath p v)
+                printfn "comparing %s to %s" d (versionPath p year v)
+                d <> versionPath p year v)
             |> Array.map (fun d ->
                 try
                     Directory.Delete(d, true)
@@ -492,12 +513,12 @@ let trigger (u: Event<Update list>) updates d =
     u.Trigger updates
     Ok d
 
-let saveLauncher (p, v) (data: byte array) =
-    let path = launcherPath p v
+let saveLauncher (p, year, v) (data: byte array) =
+    let path = launcherPath p year v
 
     try
         File.WriteAllBytes(path, data)
-        Ok(p, v)
+        Ok(p, year, v)
     with e ->
         Error(FailedToInstall("launcher", e))
 
@@ -505,28 +526,28 @@ let yes x a =
     x ()
     Ok a
 
-let downloadAndInstallClient (client: HttpClient) (u: Event<Update list>) (d, p, v) =
+let downloadAndInstallClient (client: HttpClient) (u: Event<Update list>) (d, p, year, v) =
     if d then
-        Ok(p, v)
+        Ok(p, year, v)
     else
-        download client u "client" v
+        download client u (setupUrlFor year) "client" v
         >>= trigger u [ Indeterminate true; Text "Unpacking client..." ]
         >>= ungzipClient
         >>= trigger u [ Text "Installing client..." ]
-        >>= untarClient p v
+        >>= untarClient p year v
 
-let downloadAndInstallLauncher (client: HttpClient) (u: Event<Update list>) (d, p, v) =
+let downloadAndInstallLauncher (client: HttpClient) (u: Event<Update list>) (d, p, year, v) =
     if d then
-        Ok(p, v)
+        Ok(p, year, v)
     else
-        download client u "launcher" (launcherFilename ())
+        download client u setupUrl "launcher" (launcherFilename ())
         >>= trigger u [ Text "Installing launcher..." ]
-        >>= saveLauncher (p, v)
+        >>= saveLauncher (p, year, v)
 
-let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket version (p, v) =
+let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket year (p, _, v) =
     if ticket = "" then
         u.Trigger [ Text $"Clearing old versions..." ]
-        let r = clearOldVersions p v ()
+        let r = clearOldVersions p year v ()
 
         if r.IsOk then
             u.Trigger [ Progress 100; Indeterminate false; Text "Done!" ]
@@ -538,22 +559,22 @@ let launchAndComplete (c: Event<Control>) (u: Event<Update list>) ticket version
     else
         u.Trigger [ Text $"Starting {name}..." ]
 
-        launch ticket version (p, v)
+        launch ticket year (p, year, v)
         >>= trigger u [ Text $"Finishing up..." ]
         >>= checkThatItLaunchedCorrectly
         >>= trigger u [ Text $"Clearing old versions..." ]
-        >>= clearOldVersions p v
+        >>= clearOldVersions p year v
 
-let init ticket version (c: Event<Control>) (u: Event<Update list>) =
+let init ticket year (c: Event<Control>) (u: Event<Update list>) =
     u.Trigger [ Text $"Connecting to {name}..."; Indeterminate false ]
 
     use client = new HttpClient()
 
     let result =
-        requestVersion client
+        requestVersion client year
         >>= log
         >>= validateVersion
-        >>= getPath
+        >>= getPath year
         >>= log
         >>= trigger u [ Text "Getting client..." ]
         >>= ensurePath playerPath
@@ -572,7 +593,7 @@ let init ticket version (c: Event<Control>) (u: Event<Update list>) =
              else
                  registerURILinux)
         >>= yes (fun () -> log "registered" |> ignore)
-        >>= launchAndComplete c u ticket version
+        >>= launchAndComplete c u ticket year
 
     match result with
     | Ok _ ->
