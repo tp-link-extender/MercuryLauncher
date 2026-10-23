@@ -46,8 +46,11 @@ let url = $"https://{domain}"
 let setupUrl = $"https://setup.{domain}"
 let authUrl = $"{url}/negotiate" // /Login/Negotiate.ashx
 
-let joinUrl ticket =
-    function
+let joinUrl ticket year =
+    match year with
+    // the 2013 client fetches its join script through WinInet, which under Wine fails to read the HTTPS response (the client just shows "Unable to join game"), so use plain HTTP there. the 2016 client uses a newer HTTP stack and handles HTTPS fine. use the www host so the request is not redirected to HTTPS first. the join script is signed and the ticket is single-use, so this does not let the client run untrusted code.
+    | Client2013 when Environment.OSVersion.Platform <> PlatformID.Win32NT ->
+        $"http://www.{domain}/game/join?ticket=%s{ticket}"
     | Client2013 -> $"https://{domain}/game/join?ticket=%s{ticket}"
     | Client2016 -> $"https://{domain}/game/join/2016?ticket=%s{ticket}"
 
