@@ -244,21 +244,16 @@ let ensurePath fn (p, year, v) = Ok(File.Exists(fn p year v), p, year, v)
 let startProcess (exePath: string) (args: string array) = Process.Start(exePath, args)
 
 let startProcessUmu (exePath: string) (args: string array) =
-    let allArgs = Array.append [| exePath |] args
-    let joined = String.Join(" ", allArgs)
-
-    let hasNvidia = File.Exists "/proc/driver/nvidia/version"
-
-    let prefix =
-        if hasNvidia then
-            "__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia "
-        else
-            ""
-
-    let cmd = sprintf "%sumu-run %s" prefix joined
-
+    // pass the arguments directly instead of building a shell command, so characters in the join URL (e.g. '?' or '&') are not interpreted by bash
     let psi =
-        ProcessStartInfo(FileName = "bash", Arguments = sprintf "-c \"%s\"" cmd, UseShellExecute = false)
+        ProcessStartInfo(FileName = "umu-run", UseShellExecute = false)
+
+    psi.ArgumentList.Add exePath
+    args |> Array.iter psi.ArgumentList.Add
+
+    if File.Exists "/proc/driver/nvidia/version" then
+        psi.Environment["__NV_PRIME_RENDER_OFFLOAD"] <- "1"
+        psi.Environment["__GLX_VENDOR_LIBRARY_NAME"] <- "nvidia"
 
     Process.Start psi
 
